@@ -1,0 +1,21 @@
+//! CLI commands
+
+pub mod analyze;
+pub mod architecture;
+pub mod compare;
+pub mod config;
+pub mod export;
+pub mod hotspots;
+pub mod impact;
+pub mod index;
+pub mod init;
+pub mod install;
+pub mod predict;
+pub mod search;
+pub mod serve;
+pub mod stats;
+pub mod suggest;
+pub mod understand;
+pub mod uninstall;
+pub mod version;
+pub mod watch;

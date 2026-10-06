@@ -1,0 +1,48 @@
+[build-system]
+requires = ["maturin>=1.0,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "neuracode-ai"
+version = "0.1.0"
+description = "NeuraCode AI - Advanced AI capabilities for code intelligence"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [
+    { name = "NeuraCode Team" }
+]
+requires-python = ">=3.10"
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Intended Audience :: Developers",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+]
+dependencies = [
+    "numpy>=1.24.0",
+    "sentence-transformers>=2.2.0",
+    "torch>=2.0.0",
+    "transformers>=4.30.0",
+    "pillow>=10.0.0",
+    "pytesseract>=0.3.10",
+    "networkx>=3.1",
+    "scikit-learn>=1.3.0",
+]
+
+[project.optional-dependencies]
+dev = [
+    "pytest>=7.0.0",
+    "pytest-asyncio>=0.21.0",
+    "black>=23.0.0",
+    "ruff>=0.1.0",
+    "mypy>=1.0.0",
+]
+
+[project.scripts]
+neuracode-ai = "neuracode.cli:main"
+
+[tool.maturin]
+features = ["pyo3/extension-module"]

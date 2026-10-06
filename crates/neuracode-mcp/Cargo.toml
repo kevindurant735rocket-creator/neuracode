@@ -1,0 +1,22 @@
+[package]
+name = "neuracode-mcp"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description.workspace = true
+
+[[bin]]
+name = "neuracode-mcp"
+path = "src/main.rs"
+
+[dependencies]
+neuracode-core = { path = "../neuracode-core" }
+tokio = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true, features = ["env-filter"] }
+anyhow = { workspace = true }
+uuid = { workspace = true }
+chrono = { workspace = true }
