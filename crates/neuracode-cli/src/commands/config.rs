@@ -6,7 +6,7 @@ use neuracode_core::NeuraCodeConfig;
 
 pub async fn execute(full: bool) -> Result<()> {
     let config = NeuraCodeConfig::default();
-    
+
     if full {
         println!("{}", "NeuraCode Configuration".bold());
         println!();
@@ -31,6 +31,6 @@ pub async fn execute(full: bool) -> Result<()> {
         println!();
         println!("Use --full to see all settings");
     }
-    
+
     Ok(())
 }

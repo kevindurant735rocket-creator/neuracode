@@ -1,35 +1,35 @@
 //! Learn Engine - Continuous learning and knowledge accumulation
-//! 
+//!
 //! This module enables NeuraCode to learn from sessions and improve over time.
 
+use crate::error::Result;
 use crate::types::*;
-use crate::error::{NeuraCodeError, Result};
 use crate::NeuraCodeConfig;
 use dashmap::DashMap;
-use rusqlite::{Connection, params};
-use std::collections::HashMap;
-use std::sync::Arc;
 use parking_lot::RwLock;
-use tracing::{debug, info, instrument};
+use rusqlite::{params, Connection};
+use std::sync::Arc;
+use tracing::{info, instrument};
 use uuid::Uuid;
 
 /// Learn Engine - Continuous learning from sessions
+#[allow(dead_code)]
 pub struct LearnEngine {
     /// Configuration
     config: NeuraCodeConfig,
-    
+
     /// Learned patterns
     patterns: Arc<DashMap<Uuid, Pattern>>,
-    
+
     /// User preferences
     preferences: Arc<RwLock<UserPreferences>>,
-    
+
     /// Code style
     code_style: Arc<RwLock<CodeStyle>>,
-    
+
     /// Knowledge base
     knowledge: Arc<DashMap<Uuid, Knowledge>>,
-    
+
     /// SQLite connection
     db: Arc<parking_lot::Mutex<Connection>>,
 }
@@ -39,19 +39,19 @@ pub struct LearnEngine {
 pub struct UserPreferences {
     /// Preferred naming convention
     pub naming_convention: Option<String>,
-    
+
     /// Preferred code style
     pub code_style: Option<String>,
-    
+
     /// Preferred test framework
     pub test_framework: Option<String>,
-    
+
     /// Preferred documentation style
     pub documentation_style: Option<String>,
-    
+
     /// Common patterns
     pub common_patterns: Vec<String>,
-    
+
     /// Preferred languages
     pub preferred_languages: Vec<Language>,
 }
@@ -61,22 +61,22 @@ pub struct UserPreferences {
 pub struct CodeStyle {
     /// Indentation style
     pub indentation: IndentationStyle,
-    
+
     /// Line ending style
     pub line_ending: LineEndingStyle,
-    
+
     /// Brace style
     pub brace_style: BraceStyle,
-    
+
     /// Maximum line length
     pub max_line_length: usize,
-    
+
     /// Use semicolons
     pub use_semicolons: Option<bool>,
-    
+
     /// Use trailing commas
     pub use_trailing_commas: Option<bool>,
-    
+
     /// Quote style
     pub quote_style: QuoteStyle,
 }
@@ -117,21 +117,21 @@ impl LearnEngine {
     /// Create a new LearnEngine
     pub async fn new(config: &NeuraCodeConfig) -> Result<Self> {
         info!("Initializing LearnEngine");
-        
+
         // Ensure database directory exists
         std::fs::create_dir_all(&config.db_path)?;
-        
+
         // Open database
         let db_path = config.db_path.join("learning.db");
         let conn = Connection::open(&db_path)?;
-        
+
         // Initialize schema
         Self::init_database(&conn)?;
-        
+
         // Load existing data
         let patterns = Self::load_patterns(&conn)?;
         let knowledge = Self::load_knowledge(&conn)?;
-        
+
         Ok(Self {
             config: config.clone(),
             patterns: Arc::new(patterns),
@@ -149,7 +149,7 @@ impl LearnEngine {
             db: Arc::new(parking_lot::Mutex::new(conn)),
         })
     }
-    
+
     /// Initialize database schema
     fn init_database(conn: &Connection) -> Result<()> {
         conn.execute_batch(
@@ -194,21 +194,21 @@ impl LearnEngine {
             CREATE INDEX IF NOT EXISTS idx_patterns_name ON patterns(name);
             CREATE INDEX IF NOT EXISTS idx_knowledge_kind ON knowledge(kind);
             CREATE INDEX IF NOT EXISTS idx_knowledge_tags ON knowledge(tags);
-            "
+            ",
         )?;
-        
+
         Ok(())
     }
-    
+
     /// Load patterns from database
     fn load_patterns(conn: &Connection) -> Result<DashMap<Uuid, Pattern>> {
-        let mut patterns = DashMap::new();
-        
+        let patterns = DashMap::new();
+
         let mut stmt = conn.prepare("SELECT * FROM patterns")?;
         let rows = stmt.query_map([], |row| {
             let id: String = row.get(0)?;
             let examples: String = row.get(6)?;
-            
+
             Ok(Pattern {
                 id: Uuid::parse_str(&id).unwrap_or_else(|_| Uuid::new_v4()),
                 kind: Self::parse_pattern_kind(&row.get::<_, String>(1)?),
@@ -219,26 +219,24 @@ impl LearnEngine {
                 examples: serde_json::from_str(&examples).unwrap_or_default(),
             })
         })?;
-        
-        for row in rows {
-            if let Ok(pattern) = row {
-                patterns.insert(pattern.id, pattern);
-            }
+
+        for pattern in rows.flatten() {
+            patterns.insert(pattern.id, pattern);
         }
-        
+
         Ok(patterns)
     }
-    
+
     /// Load knowledge from database
     fn load_knowledge(conn: &Connection) -> Result<DashMap<Uuid, Knowledge>> {
-        let mut knowledge = DashMap::new();
-        
+        let knowledge = DashMap::new();
+
         let mut stmt = conn.prepare("SELECT * FROM knowledge")?;
         let rows = stmt.query_map([], |row| {
             let id: String = row.get(0)?;
             let tags: String = row.get(6)?;
             let related: String = row.get(7)?;
-            
+
             Ok(Knowledge {
                 id: Uuid::parse_str(&id).unwrap_or_else(|_| Uuid::new_v4()),
                 kind: Self::parse_knowledge_kind(&row.get::<_, String>(1)?),
@@ -253,16 +251,14 @@ impl LearnEngine {
                 related: serde_json::from_str(&related).unwrap_or_default(),
             })
         })?;
-        
-        for row in rows {
-            if let Ok(k) = row {
-                knowledge.insert(k.id, k);
-            }
+
+        for k in rows.flatten() {
+            knowledge.insert(k.id, k);
         }
-        
+
         Ok(knowledge)
     }
-    
+
     /// Parse pattern kind
     fn parse_pattern_kind(s: &str) -> PatternKind {
         match s {
@@ -277,7 +273,7 @@ impl LearnEngine {
             _ => PatternKind::CodeStructure,
         }
     }
-    
+
     /// Parse knowledge kind
     fn parse_knowledge_kind(s: &str) -> KnowledgeKind {
         match s {
@@ -291,79 +287,84 @@ impl LearnEngine {
             _ => KnowledgeKind::ProjectContext,
         }
     }
-    
+
     /// Learn from a session
     #[instrument(skip(self))]
     pub async fn learn_from_session(&self, session: &Session) -> Result<()> {
         info!("Learning from session: {}", session.id);
-        
+
         // Learn from code changes
         self.learn_code_style(&session.code_changes).await?;
-        
+
         // Learn from interactions
         self.learn_preferences(&session.interactions).await?;
-        
+
         // Extract patterns
         self.extract_patterns(session).await?;
-        
+
         // Accumulate knowledge
         self.accumulate_knowledge(session).await?;
-        
+
         info!("Learning completed for session: {}", session.id);
         Ok(())
     }
-    
+
     /// Learn code style from changes
     async fn learn_code_style(&self, changes: &[CodeChange]) -> Result<()> {
-        let mut style = self.code_style.write();
-        
-        for change in changes {
-            if let Some(ref content) = change.new_content {
-                // Detect indentation
-                for line in content.lines() {
-                    if line.starts_with("    ") {
-                        style.indentation = IndentationStyle::Spaces;
-                    } else if line.starts_with('\t') {
-                        style.indentation = IndentationStyle::Tabs;
+        // Update style under the lock, then drop it before any await
+        let style_snapshot = {
+            let mut style = self.code_style.write();
+
+            for change in changes {
+                if let Some(ref content) = change.new_content {
+                    // Detect indentation
+                    for line in content.lines() {
+                        if line.starts_with("    ") {
+                            style.indentation = IndentationStyle::Spaces;
+                        } else if line.starts_with('\t') {
+                            style.indentation = IndentationStyle::Tabs;
+                        }
                     }
-                }
-                
-                // Detect line length
-                for line in content.lines() {
-                    if line.len() > style.max_line_length {
-                        style.max_line_length = line.len();
+
+                    // Detect line length
+                    for line in content.lines() {
+                        if line.len() > style.max_line_length {
+                            style.max_line_length = line.len();
+                        }
                     }
-                }
-                
-                // Detect semicolons
-                if content.contains(';') {
-                    style.use_semicolons = Some(true);
-                }
-                
-                // Detect trailing commas
-                if content.contains(",\n") || content.contains(",\r\n") {
-                    style.use_trailing_commas = Some(true);
-                }
-                
-                // Detect quote style
-                if content.contains("'") && !content.contains("\"") {
-                    style.quote_style = QuoteStyle::Single;
-                } else if content.contains("\"") && !content.contains("'") {
-                    style.quote_style = QuoteStyle::Double;
+
+                    // Detect semicolons
+                    if content.contains(';') {
+                        style.use_semicolons = Some(true);
+                    }
+
+                    // Detect trailing commas
+                    if content.contains(",\n") || content.contains(",\r\n") {
+                        style.use_trailing_commas = Some(true);
+                    }
+
+                    // Detect quote style
+                    if content.contains("'") && !content.contains("\"") {
+                        style.quote_style = QuoteStyle::Single;
+                    } else if content.contains("\"") && !content.contains("'") {
+                        style.quote_style = QuoteStyle::Double;
+                    }
                 }
             }
-        }
-        
+
+            style.clone()
+        }; // guard dropped here
+
         // Persist to database
-        self.persist_code_style(&style).await?;
-        
+        self.persist_code_style(&style_snapshot).await?;
+
         Ok(())
     }
-    
+
     /// Learn preferences from interactions
     async fn learn_preferences(&self, interactions: &[Interaction]) -> Result<()> {
         let mut prefs = self.preferences.write();
-        
+
         for interaction in interactions {
             match interaction.kind {
                 InteractionKind::Query => {
@@ -382,10 +383,10 @@ impl LearnEngine {
                 _ => {}
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Extract patterns from session
     async fn extract_patterns(&self, session: &Session) -> Result<()> {
         // Extract naming conventions
@@ -393,28 +394,28 @@ impl LearnEngine {
         if let Some(pattern) = naming_pattern {
             self.add_pattern(pattern).await?;
         }
-        
+
         // Extract error handling patterns
         let error_pattern = self.extract_error_handling_pattern(&session.code_changes);
         if let Some(pattern) = error_pattern {
             self.add_pattern(pattern).await?;
         }
-        
+
         // Extract testing patterns
         let testing_pattern = self.extract_testing_pattern(&session.code_changes);
         if let Some(pattern) = testing_pattern {
             self.add_pattern(pattern).await?;
         }
-        
+
         Ok(())
     }
-    
+
     /// Extract naming convention
     fn extract_naming_convention(&self, changes: &[CodeChange]) -> Option<Pattern> {
         // Simple heuristic: check if names follow camelCase, snake_case, etc.
         let mut camel_case_count = 0;
         let mut snake_case_count = 0;
-        
+
         for change in changes {
             if let Some(ref content) = change.new_content {
                 for word in content.split_whitespace() {
@@ -426,7 +427,7 @@ impl LearnEngine {
                 }
             }
         }
-        
+
         if camel_case_count > snake_case_count {
             Some(Pattern {
                 id: Uuid::new_v4(),
@@ -451,27 +452,23 @@ impl LearnEngine {
             None
         }
     }
-    
+
     /// Extract error handling pattern
     fn extract_error_handling_pattern(&self, changes: &[CodeChange]) -> Option<Pattern> {
         let mut has_result = false;
-        let mut has_option = false;
         let mut has_try_catch = false;
-        
+
         for change in changes {
             if let Some(ref content) = change.new_content {
                 if content.contains("Result<") {
                     has_result = true;
-                }
-                if content.contains("Option<") {
-                    has_option = true;
                 }
                 if content.contains("try") && content.contains("catch") {
                     has_try_catch = true;
                 }
             }
         }
-        
+
         if has_result {
             Some(Pattern {
                 id: Uuid::new_v4(),
@@ -496,18 +493,18 @@ impl LearnEngine {
             None
         }
     }
-    
+
     /// Extract testing pattern
     fn extract_testing_pattern(&self, changes: &[CodeChange]) -> Option<Pattern> {
         let mut has_tests = false;
-        
+
         for change in changes {
             if change.file_path.to_string_lossy().contains("test") {
                 has_tests = true;
                 break;
             }
         }
-        
+
         if has_tests {
             Some(Pattern {
                 id: Uuid::new_v4(),
@@ -522,15 +519,15 @@ impl LearnEngine {
             None
         }
     }
-    
+
     /// Add a pattern
     async fn add_pattern(&self, pattern: Pattern) -> Result<()> {
         self.patterns.insert(pattern.id, pattern.clone());
-        
+
         // Persist to database
         let db = self.db.lock();
         let examples = serde_json::to_string(&pattern.examples)?;
-        
+
         db.execute(
             "INSERT OR REPLACE INTO patterns (
                 id, kind, name, description, frequency, confidence, examples, created_at, updated_at
@@ -547,10 +544,10 @@ impl LearnEngine {
                 chrono::Utc::now().to_rfc3339(),
             ],
         )?;
-        
+
         Ok(())
     }
-    
+
     /// Accumulate knowledge from session
     async fn accumulate_knowledge(&self, session: &Session) -> Result<()> {
         // Extract knowledge from interactions
@@ -568,23 +565,23 @@ impl LearnEngine {
                     tags: vec!["error".to_string()],
                     related: vec![],
                 };
-                
+
                 self.add_knowledge(knowledge).await?;
             }
         }
-        
+
         Ok(())
     }
-    
+
     /// Add knowledge
     async fn add_knowledge(&self, knowledge: Knowledge) -> Result<()> {
         self.knowledge.insert(knowledge.id, knowledge.clone());
-        
+
         // Persist to database
         let db = self.db.lock();
         let tags = serde_json::to_string(&knowledge.tags)?;
         let related = serde_json::to_string(&knowledge.related)?;
-        
+
         db.execute(
             "INSERT OR REPLACE INTO knowledge (
                 id, kind, content, source, confidence, created_at, updated_at, tags, related
@@ -601,54 +598,67 @@ impl LearnEngine {
                 related,
             ],
         )?;
-        
+
         Ok(())
     }
-    
+
     /// Persist code style
     async fn persist_code_style(&self, style: &CodeStyle) -> Result<()> {
         let db = self.db.lock();
-        
+
         let values = vec![
             ("indentation", format!("{:?}", style.indentation)),
             ("line_ending", format!("{:?}", style.line_ending)),
             ("brace_style", format!("{:?}", style.brace_style)),
             ("max_line_length", style.max_line_length.to_string()),
-            ("use_semicolons", style.use_semicolons.map(|b| b.to_string()).unwrap_or_default()),
-            ("use_trailing_commas", style.use_trailing_commas.map(|b| b.to_string()).unwrap_or_default()),
+            (
+                "use_semicolons",
+                style
+                    .use_semicolons
+                    .map(|b| b.to_string())
+                    .unwrap_or_default(),
+            ),
+            (
+                "use_trailing_commas",
+                style
+                    .use_trailing_commas
+                    .map(|b| b.to_string())
+                    .unwrap_or_default(),
+            ),
             ("quote_style", format!("{:?}", style.quote_style)),
         ];
-        
+
         for (key, value) in values {
             db.execute(
                 "INSERT OR REPLACE INTO code_style (key, value, updated_at) VALUES (?1, ?2, ?3)",
                 params![key, value, chrono::Utc::now().to_rfc3339()],
             )?;
         }
-        
+
         Ok(())
     }
-    
+
     /// Get learned patterns
     pub fn get_patterns(&self) -> Vec<Pattern> {
         self.patterns.iter().map(|p| p.value().clone()).collect()
     }
-    
+
     /// Get code style
     pub fn get_code_style(&self) -> CodeStyle {
         self.code_style.read().clone()
     }
-    
+
     /// Get knowledge base
     pub fn get_knowledge(&self) -> Vec<Knowledge> {
         self.knowledge.iter().map(|k| k.value().clone()).collect()
     }
-    
+
     /// Search knowledge
     pub fn search_knowledge(&self, query: &str) -> Vec<Knowledge> {
         let query_lower = query.to_lowercase();
-        
-        self.knowledge.iter()
+
+        self.knowledge
+            .iter()
             .filter(|k| {
                 let content = k.value().content.to_lowercase();
                 content.contains(&query_lower)

@@ -7,17 +7,21 @@ use neuracode_core::{NeuraCode, NeuraCodeConfig};
 pub async fn execute(path1: String, path2: String, format: String) -> Result<()> {
     let config = NeuraCodeConfig::default();
     let neuracode = NeuraCode::new(config).await?;
-    
+
     println!("{}", "Codebase Comparison".bold().underline());
     println!();
     println!("Path 1: {}", path1.cyan());
     println!("Path 2: {}", path2.cyan());
     println!();
-    
+
     // Index both paths
-    let report1 = neuracode.index_codebase(std::path::Path::new(&path1)).await?;
-    let report2 = neuracode.index_codebase(std::path::Path::new(&path2)).await?;
-    
+    let report1 = neuracode
+        .index_codebase(std::path::Path::new(&path1))
+        .await?;
+    let report2 = neuracode
+        .index_codebase(std::path::Path::new(&path2))
+        .await?;
+
     if format == "json" {
         let output = serde_json::json!({
             "path1": {
@@ -41,28 +45,34 @@ pub async fn execute(path1: String, path2: String, format: String) -> Result<()>
         println!("{}", serde_json::to_string_pretty(&output)?);
     } else {
         println!("{}", "Statistics:".bold());
-        println!("{:<20} {:>10} {:>10} {:>10}", "Metric", "Path 1", "Path 2", "Diff");
+        println!(
+            "{:<20} {:>10} {:>10} {:>10}",
+            "Metric", "Path 1", "Path 2", "Diff"
+        );
         println!("{}", "─".repeat(55));
-        println!("{:<20} {:>10} {:>10} {:>+10}", 
-            "Files", 
-            report1.files_indexed, 
+        println!(
+            "{:<20} {:>10} {:>10} {:>+10}",
+            "Files",
+            report1.files_indexed,
             report2.files_indexed,
             report2.files_indexed as i64 - report1.files_indexed as i64
         );
-        println!("{:<20} {:>10} {:>10} {:>+10}", 
-            "Nodes", 
-            report1.nodes_created, 
+        println!(
+            "{:<20} {:>10} {:>10} {:>+10}",
+            "Nodes",
+            report1.nodes_created,
             report2.nodes_created,
             report2.nodes_created as i64 - report1.nodes_created as i64
         );
-        println!("{:<20} {:>10} {:>10} {:>+10}", 
-            "Edges", 
-            report1.edges_created, 
+        println!(
+            "{:<20} {:>10} {:>10} {:>+10}",
+            "Edges",
+            report1.edges_created,
             report2.edges_created,
             report2.edges_created as i64 - report1.edges_created as i64
         );
         println!();
-        
+
         // Summary
         let file_diff = report2.files_indexed as i64 - report1.files_indexed as i64;
         if file_diff > 0 {
@@ -73,6 +83,6 @@ pub async fn execute(path1: String, path2: String, format: String) -> Result<()>
             println!("Both paths have the same number of files");
         }
     }
-    
+
     Ok(())
 }

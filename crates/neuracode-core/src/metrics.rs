@@ -29,20 +29,26 @@ impl TimerStats {
             max_duration: Duration::ZERO,
         }
     }
-    
+
     fn record(&mut self, duration: Duration) {
         self.count += 1;
         self.total_duration += duration;
         self.min_duration = self.min_duration.min(duration);
         self.max_duration = self.max_duration.max(duration);
     }
-    
+
     pub fn avg_duration(&self) -> Duration {
         if self.count > 0 {
             self.total_duration / self.count as u32
         } else {
             Duration::ZERO
         }
+    }
+}
+
+impl Default for Metrics {
+    fn default() -> Self {
+        Self::new()
     }
 }
 
@@ -55,13 +61,13 @@ impl Metrics {
             gauges: RwLock::new(HashMap::new()),
         }
     }
-    
+
     /// Increment a counter
     pub fn increment(&self, name: &str) {
         let mut counters = self.counters.write();
         *counters.entry(name.to_string()).or_insert(0) += 1;
     }
-    
+
     /// Record a timer
     pub fn record_timer(&self, name: &str, duration: Duration) {
         let mut timers = self.timers.write();
@@ -70,27 +76,27 @@ impl Metrics {
             .or_insert_with(TimerStats::new)
             .record(duration);
     }
-    
+
     /// Set a gauge value
     pub fn set_gauge(&self, name: &str, value: f64) {
         self.gauges.write().insert(name.to_string(), value);
     }
-    
+
     /// Get counter value
     pub fn get_counter(&self, name: &str) -> u64 {
         self.counters.read().get(name).copied().unwrap_or(0)
     }
-    
+
     /// Get timer stats
     pub fn get_timer(&self, name: &str) -> Option<TimerStats> {
         self.timers.read().get(name).cloned()
     }
-    
+
     /// Get gauge value
     pub fn get_gauge(&self, name: &str) -> f64 {
         self.gauges.read().get(name).copied().unwrap_or(0.0)
     }
-    
+
     /// Get all metrics as a report
     pub fn report(&self) -> MetricsReport {
         MetricsReport {
@@ -99,7 +105,7 @@ impl Metrics {
             gauges: self.gauges.read().clone(),
         }
     }
-    
+
     /// Reset all metrics
     pub fn reset(&self) {
         self.counters.write().clear();
@@ -152,38 +158,38 @@ macro_rules! timed {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_counter() {
         let metrics = Metrics::new();
-        
+
         metrics.increment("requests");
         metrics.increment("requests");
         metrics.increment("errors");
-        
+
         assert_eq!(metrics.get_counter("requests"), 2);
         assert_eq!(metrics.get_counter("errors"), 1);
         assert_eq!(metrics.get_counter("unknown"), 0);
     }
-    
+
     #[test]
     fn test_timer() {
         let metrics = Metrics::new();
-        
+
         metrics.record_timer("query", Duration::from_millis(100));
         metrics.record_timer("query", Duration::from_millis(200));
-        
+
         let stats = metrics.get_timer("query").unwrap();
         assert_eq!(stats.count, 2);
         assert_eq!(stats.avg_duration(), Duration::from_millis(150));
     }
-    
+
     #[test]
     fn test_gauge() {
         let metrics = Metrics::new();
-        
+
         metrics.set_gauge("memory_usage", 1024.0);
-        
+
         assert_eq!(metrics.get_gauge("memory_usage"), 1024.0);
     }
 }

@@ -6,7 +6,7 @@ use std::path::Path;
 pub fn file_hash(path: &Path) -> Option<String> {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
-    
+
     let content = std::fs::read(path).ok()?;
     let mut hasher = DefaultHasher::new();
     content.hash(&mut hasher);
@@ -17,7 +17,7 @@ pub fn file_hash(path: &Path) -> Option<String> {
 pub fn format_duration(duration: std::time::Duration) -> String {
     let secs = duration.as_secs();
     let millis = duration.subsec_millis();
-    
+
     if secs > 60 {
         let mins = secs / 60;
         let secs = secs % 60;
@@ -32,14 +32,14 @@ pub fn format_duration(duration: std::time::Duration) -> String {
 /// Format bytes in human-readable form
 pub fn format_bytes(bytes: u64) -> String {
     const UNITS: &[&str] = &["B", "KB", "MB", "GB", "TB"];
-    
+
     if bytes == 0 {
         return "0 B".to_string();
     }
-    
+
     let exp = (bytes as f64).log(1024.0).min(UNITS.len() as f64 - 1.0) as usize;
     let value = bytes as f64 / 1024f64.powi(exp as i32);
-    
+
     format!("{:.2} {}", value, UNITS[exp])
 }
 
@@ -75,14 +75,14 @@ pub fn is_valid_identifier(s: &str) -> bool {
     if s.is_empty() {
         return false;
     }
-    
+
     let mut chars = s.chars();
     let first = chars.next().unwrap();
-    
+
     if !first.is_alphabetic() && first != '_' {
         return false;
     }
-    
+
     chars.all(|c| c.is_alphanumeric() || c == '_')
 }
 
@@ -90,7 +90,7 @@ pub fn is_valid_identifier(s: &str) -> bool {
 pub fn snake_to_camel(s: &str) -> String {
     let mut result = String::new();
     let mut capitalize_next = false;
-    
+
     for c in s.chars() {
         if c == '_' {
             capitalize_next = true;
@@ -101,14 +101,14 @@ pub fn snake_to_camel(s: &str) -> String {
             result.push(c);
         }
     }
-    
+
     result
 }
 
 /// Convert camelCase to snake_case
 pub fn camel_to_snake(s: &str) -> String {
     let mut result = String::new();
-    
+
     for (i, c) in s.chars().enumerate() {
         if c.is_uppercase() {
             if i > 0 {
@@ -119,7 +119,7 @@ pub fn camel_to_snake(s: &str) -> String {
             result.push(c);
         }
     }
-    
+
     result
 }
 
@@ -127,18 +127,18 @@ pub fn camel_to_snake(s: &str) -> String {
 pub fn string_similarity(a: &str, b: &str) -> f32 {
     let a_lower = a.to_lowercase();
     let b_lower = b.to_lowercase();
-    
+
     if a_lower == b_lower {
         return 1.0;
     }
-    
+
     // Simple Jaccard similarity
     let a_words: std::collections::HashSet<&str> = a_lower.split_whitespace().collect();
     let b_words: std::collections::HashSet<&str> = b_lower.split_whitespace().collect();
-    
+
     let intersection: std::collections::HashSet<_> = a_words.intersection(&b_words).collect();
     let union: std::collections::HashSet<_> = a_words.union(&b_words).collect();
-    
+
     if union.is_empty() {
         0.0
     } else {
@@ -149,28 +149,28 @@ pub fn string_similarity(a: &str, b: &str) -> f32 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_snake_to_camel() {
         assert_eq!(snake_to_camel("hello_world"), "helloWorld");
         assert_eq!(snake_to_camel("foo_bar_baz"), "fooBarBaz");
         assert_eq!(snake_to_camel("single"), "single");
     }
-    
+
     #[test]
     fn test_camel_to_snake() {
         assert_eq!(camel_to_snake("helloWorld"), "hello_world");
         assert_eq!(camel_to_snake("fooBarBaz"), "foo_bar_baz");
         assert_eq!(camel_to_snake("single"), "single");
     }
-    
+
     #[test]
     fn test_string_similarity() {
         assert_eq!(string_similarity("hello world", "hello world"), 1.0);
         assert_eq!(string_similarity("hello", "world"), 0.0);
         assert!(string_similarity("hello world", "hello there") > 0.0);
     }
-    
+
     #[test]
     fn test_is_valid_identifier() {
         assert!(is_valid_identifier("foo"));

@@ -5,13 +5,13 @@ use std::path::Path;
 
 pub async fn execute(path: String) -> Result<()> {
     let project_path = Path::new(&path);
-    
+
     println!("Initializing NeuraCode in: {}", project_path.display());
-    
+
     // Create .neuracode directory
     let neuracode_dir = project_path.join(".neuracode");
     std::fs::create_dir_all(&neuracode_dir)?;
-    
+
     // Create config file
     let config_path = neuracode_dir.join("config.toml");
     if !config_path.exists() {
@@ -45,13 +45,13 @@ max_file_size = 1048576
         std::fs::write(&config_path, config)?;
         println!("Created configuration: {}", config_path.display());
     }
-    
+
     // Create cache directory
     let cache_dir = neuracode_dir.join("cache");
     std::fs::create_dir_all(&cache_dir)?;
-    
+
     println!("✓ NeuraCode initialized successfully!");
     println!("  Run 'neuracode index' to index your codebase");
-    
+
     Ok(())
 }

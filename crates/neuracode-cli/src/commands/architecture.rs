@@ -7,13 +7,13 @@ use neuracode_core::{NeuraCode, NeuraCodeConfig};
 pub async fn execute(format: String) -> Result<()> {
     // Create configuration
     let config = NeuraCodeConfig::default();
-    
+
     // Create NeuraCode instance
     let neuracode = NeuraCode::new(config).await?;
-    
+
     // Get architecture info
     let arch = neuracode.code_brain.detect_architecture().await;
-    
+
     if format == "json" {
         println!("{}", serde_json::to_string_pretty(&arch)?);
     } else {
@@ -21,7 +21,7 @@ pub async fn execute(format: String) -> Result<()> {
             Some(arch) => {
                 println!("Architecture Pattern: {}", arch.pattern.cyan());
                 println!();
-                
+
                 if !arch.layers.is_empty() {
                     println!("Layers:");
                     for layer in &arch.layers {
@@ -29,7 +29,7 @@ pub async fn execute(format: String) -> Result<()> {
                     }
                     println!();
                 }
-                
+
                 if !arch.components.is_empty() {
                     println!("Components:");
                     for comp in &arch.components {
@@ -37,7 +37,7 @@ pub async fn execute(format: String) -> Result<()> {
                     }
                     println!();
                 }
-                
+
                 if !arch.data_flow.is_empty() {
                     println!("Data Flow:");
                     for flow in &arch.data_flow {
@@ -51,6 +51,6 @@ pub async fn execute(format: String) -> Result<()> {
             }
         }
     }
-    
+
     Ok(())
 }

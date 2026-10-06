@@ -35,7 +35,7 @@ where
             misses: RwLock::new(0),
         }
     }
-    
+
     /// Get a value from cache
     pub fn get(&self, key: &K) -> Option<V> {
         if let Some(entry) = self.map.get(key) {
@@ -45,52 +45,52 @@ where
                 return Some(entry.value.clone());
             }
         }
-        
+
         // Cache miss
         *self.misses.write() += 1;
         None
     }
-    
+
     /// Insert a value into cache
     pub fn insert(&self, key: K, value: V) {
         // Evict expired entries if at capacity
         if self.map.len() >= self.max_size {
             self.evict_expired();
         }
-        
+
         // If still at capacity, evict oldest
         if self.map.len() >= self.max_size {
             self.evict_oldest();
         }
-        
+
         let entry = CacheEntry {
             value,
             expires_at: Instant::now() + self.ttl,
         };
-        
+
         self.map.insert(key, entry);
     }
-    
+
     /// Remove a key from cache
     pub fn remove(&self, key: &K) -> Option<V> {
         self.map.remove(key).map(|(_, entry)| entry.value)
     }
-    
+
     /// Clear all entries
     pub fn clear(&self) {
         self.map.clear();
     }
-    
+
     /// Get cache size
     pub fn len(&self) -> usize {
         self.map.len()
     }
-    
+
     /// Check if cache is empty
     pub fn is_empty(&self) -> bool {
         self.map.is_empty()
     }
-    
+
     /// Get cache statistics
     pub fn stats(&self) -> CacheStats {
         let hits = *self.hits.read();
@@ -101,7 +101,7 @@ where
         } else {
             0.0
         };
-        
+
         CacheStats {
             size: self.map.len(),
             max_size: self.max_size,
@@ -110,13 +110,13 @@ where
             hit_rate,
         }
     }
-    
+
     /// Evict expired entries
     fn evict_expired(&self) {
         let now = Instant::now();
         self.map.retain(|_, entry| entry.expires_at > now);
     }
-    
+
     /// Evict oldest entry (simple approach: remove first)
     fn evict_oldest(&self) {
         if let Some(key) = self.map.iter().next().map(|e| e.key().clone()) {
@@ -144,39 +144,39 @@ pub type ContextCache = Cache<String, crate::types::ContextPackage>;
 #[cfg(test)]
 mod tests {
     use super::*;
-    
+
     #[test]
     fn test_cache_basic() {
         let cache: Cache<String, i32> = Cache::new(10, 60);
-        
+
         cache.insert("key1".to_string(), 100);
         assert_eq!(cache.get(&"key1".to_string()), Some(100));
-        
+
         cache.insert("key2".to_string(), 200);
         assert_eq!(cache.get(&"key2".to_string()), Some(200));
-        
+
         assert_eq!(cache.len(), 2);
     }
-    
+
     #[test]
     fn test_cache_expiration() {
         let cache: Cache<String, i32> = Cache::new(10, 0);
-        
+
         cache.insert("key1".to_string(), 100);
         std::thread::sleep(Duration::from_millis(10));
-        
+
         // Should be expired
         assert_eq!(cache.get(&"key1".to_string()), None);
     }
-    
+
     #[test]
     fn test_cache_stats() {
         let cache: Cache<String, i32> = Cache::new(10, 60);
-        
+
         cache.insert("key1".to_string(), 100);
         let _ = cache.get(&"key1".to_string()); // hit
         let _ = cache.get(&"key2".to_string()); // miss
-        
+
         let stats = cache.stats();
         assert_eq!(stats.hits, 1);
         assert_eq!(stats.misses, 1);

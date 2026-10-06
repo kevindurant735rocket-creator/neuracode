@@ -559,7 +559,7 @@ impl AgentType {
             Self::Continue => "Continue",
         }
     }
-    
+
     pub fn all() -> Vec<Self> {
         vec![
             Self::ClaudeCode,

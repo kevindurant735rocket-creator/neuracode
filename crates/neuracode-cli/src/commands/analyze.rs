@@ -3,18 +3,17 @@
 use anyhow::Result;
 use colored::Colorize;
 use neuracode_core::{NeuraCode, NeuraCodeConfig};
-use std::collections::HashMap;
 
-pub async fn execute(path: String, format: String) -> Result<()> {
+pub async fn execute(_path: String, format: String) -> Result<()> {
     let config = NeuraCodeConfig::default();
     let neuracode = NeuraCode::new(config).await?;
-    
+
     // Get hotspots
     let hotspots = neuracode.code_brain.identify_hotspots().await;
-    
+
     // Get architecture
     let architecture = neuracode.code_brain.detect_architecture().await;
-    
+
     if format == "json" {
         let output = serde_json::json!({
             "hotspots": hotspots,
@@ -24,19 +23,20 @@ pub async fn execute(path: String, format: String) -> Result<()> {
     } else {
         println!("{}", "Code Analysis Report".bold().underline());
         println!();
-        
+
         // Architecture
         if let Some(arch) = architecture {
             println!("{}", "Architecture:".bold());
             println!("  Pattern: {}", arch.pattern.cyan());
             println!();
         }
-        
+
         // Hotspots
         if !hotspots.is_empty() {
             println!("{}", "Hotspots:".bold());
             for (i, hotspot) in hotspots.iter().take(10).enumerate() {
-                println!("  {}. {} ({})", 
+                println!(
+                    "  {}. {} ({})",
                     i + 1,
                     hotspot.node.name.yellow(),
                     hotspot.node.file_path.display()
@@ -48,7 +48,7 @@ pub async fn execute(path: String, format: String) -> Result<()> {
             }
             println!();
         }
-        
+
         // Recommendations
         println!("{}", "Recommendations:".bold());
         if hotspots.len() > 5 {
@@ -59,6 +59,6 @@ pub async fn execute(path: String, format: String) -> Result<()> {
         }
         println!("  • Add tests for critical paths");
     }
-    
+
     Ok(())
 }

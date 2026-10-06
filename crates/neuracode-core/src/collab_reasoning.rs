@@ -1,22 +1,23 @@
 //! Collaborative Reasoning - Multi-agent collaboration and knowledge fusion
-//! 
+//!
 //! This module enables multiple agents to work together and combine their insights.
 
+use crate::error::Result;
 use crate::types::*;
-use crate::error::{NeuraCodeError, Result};
 use crate::NeuraCodeConfig;
 use std::collections::HashMap;
-use tracing::{debug, info, instrument};
+use tracing::{info, instrument};
 use uuid::Uuid;
 
 /// Collaborative Reasoning Engine
+#[allow(dead_code)]
 pub struct CollabReasoning {
     /// Configuration
     config: NeuraCodeConfig,
-    
+
     /// Agent registry
     agents: HashMap<AgentType, AgentCapability>,
-    
+
     /// Knowledge fusion strategy
     fusion_strategy: FusionStrategy,
 }
@@ -85,76 +86,74 @@ impl CollabReasoning {
     /// Create a new CollabReasoning engine
     pub fn new(config: &NeuraCodeConfig) -> Self {
         let mut agents = HashMap::new();
-        
+
         // Register known agent capabilities
         Self::init_agent_capabilities(&mut agents);
-        
+
         Self {
             config: config.clone(),
             agents,
             fusion_strategy: FusionStrategy::WeightedAverage,
         }
     }
-    
+
     /// Initialize agent capabilities
     fn init_agent_capabilities(agents: &mut HashMap<AgentType, AgentCapability>) {
-        agents.insert(AgentType::ClaudeCode, AgentCapability {
-            agent_type: AgentType::ClaudeCode,
-            strengths: vec![
-                "code understanding".to_string(),
-                "refactoring".to_string(),
-                "documentation".to_string(),
-            ],
-            weaknesses: vec![
-                "real-time collaboration".to_string(),
-            ],
-            confidence: 0.9,
-        });
-        
-        agents.insert(AgentType::Cursor, AgentCapability {
-            agent_type: AgentType::Cursor,
-            strengths: vec![
-                "code completion".to_string(),
-                "inline editing".to_string(),
-            ],
-            weaknesses: vec![
-                "large refactoring".to_string(),
-            ],
-            confidence: 0.85,
-        });
-        
-        agents.insert(AgentType::Codex, AgentCapability {
-            agent_type: AgentType::Codex,
-            strengths: vec![
-                "code generation".to_string(),
-                "pattern matching".to_string(),
-            ],
-            weaknesses: vec![
-                "complex reasoning".to_string(),
-            ],
-            confidence: 0.8,
-        });
-        
-        agents.insert(AgentType::GeminiCLI, AgentCapability {
-            agent_type: AgentType::GeminiCLI,
-            strengths: vec![
-                "large context".to_string(),
-                "multimodal".to_string(),
-            ],
-            weaknesses: vec![
-                "code-specific tasks".to_string(),
-            ],
-            confidence: 0.75,
-        });
+        agents.insert(
+            AgentType::ClaudeCode,
+            AgentCapability {
+                agent_type: AgentType::ClaudeCode,
+                strengths: vec![
+                    "code understanding".to_string(),
+                    "refactoring".to_string(),
+                    "documentation".to_string(),
+                ],
+                weaknesses: vec!["real-time collaboration".to_string()],
+                confidence: 0.9,
+            },
+        );
+
+        agents.insert(
+            AgentType::Cursor,
+            AgentCapability {
+                agent_type: AgentType::Cursor,
+                strengths: vec!["code completion".to_string(), "inline editing".to_string()],
+                weaknesses: vec!["large refactoring".to_string()],
+                confidence: 0.85,
+            },
+        );
+
+        agents.insert(
+            AgentType::Codex,
+            AgentCapability {
+                agent_type: AgentType::Codex,
+                strengths: vec![
+                    "code generation".to_string(),
+                    "pattern matching".to_string(),
+                ],
+                weaknesses: vec!["complex reasoning".to_string()],
+                confidence: 0.8,
+            },
+        );
+
+        agents.insert(
+            AgentType::GeminiCLI,
+            AgentCapability {
+                agent_type: AgentType::GeminiCLI,
+                strengths: vec!["large context".to_string(), "multimodal".to_string()],
+                weaknesses: vec!["code-specific tasks".to_string()],
+                confidence: 0.75,
+            },
+        );
     }
-    
+
     /// Decompose a task into sub-tasks
     #[instrument(skip(self))]
     pub fn decompose_task(&self, task: &Task) -> Vec<SubTask> {
         info!("Decomposing task: {}", task.description);
-        
+
         let mut sub_tasks = Vec::new();
-        
+
         // Analyze task and create sub-tasks
         match task.task_type {
             TaskType::BugFix => {
@@ -236,37 +235,35 @@ impl CollabReasoning {
                 });
             }
         }
-        
+
         sub_tasks
     }
-    
+
     /// Execute sub-tasks in parallel
     #[instrument(skip(self))]
-    pub async fn execute_parallel(
-        &self,
-        sub_tasks: &[SubTask],
-    ) -> Vec<SubTaskResult> {
+    pub async fn execute_parallel(&self, sub_tasks: &[SubTask]) -> Vec<SubTaskResult> {
         info!("Executing {} sub-tasks in parallel", sub_tasks.len());
-        
+
         // In production, this would dispatch to actual agents
         // For now, return mock results
-        
-        sub_tasks.iter().map(|task| {
-            SubTaskResult {
+
+        sub_tasks
+            .iter()
+            .map(|task| SubTaskResult {
                 task_id: task.id,
                 agent: task.assigned_agent,
                 result: format!("Result for: {}", task.description),
                 confidence: 0.8,
                 metadata: HashMap::new(),
-            }
-        }).collect()
+            })
+            .collect()
     }
-    
+
     /// Fuse results from multiple agents
     #[instrument(skip(self))]
     pub fn fuse_results(&self, results: &[SubTaskResult]) -> FusedKnowledge {
         info!("Fusing results from {} agents", results.len());
-        
+
         if results.is_empty() {
             return FusedKnowledge {
                 content: String::new(),
@@ -276,25 +273,24 @@ impl CollabReasoning {
                 conflicts: vec![],
             };
         }
-        
+
         // Calculate weighted confidence
         let total_confidence: f32 = results.iter().map(|r| r.confidence).sum();
         let avg_confidence = total_confidence / results.len() as f32;
-        
+
         // Collect sources
-        let sources: Vec<AgentType> = results.iter()
-            .map(|r| r.agent)
-            .collect();
-        
+        let sources: Vec<AgentType> = results.iter().map(|r| r.agent).collect();
+
         // Combine results
-        let content = results.iter()
+        let content = results
+            .iter()
             .map(|r| format!("[{}] {}", r.agent.name(), r.result))
             .collect::<Vec<_>>()
             .join("\n\n");
-        
+
         // Calculate consensus (simplified)
         let consensus = avg_confidence;
-        
+
         FusedKnowledge {
             content,
             sources,
@@ -303,56 +299,61 @@ impl CollabReasoning {
             conflicts: vec![],
         }
     }
-    
+
     /// Collaborative task execution
     #[instrument(skip(self))]
     pub async fn collaborate(&self, task: &Task) -> Result<FusedKnowledge> {
-        info!("Starting collaborative execution for task: {}", task.description);
-        
+        info!(
+            "Starting collaborative execution for task: {}",
+            task.description
+        );
+
         // Decompose task
         let sub_tasks = self.decompose_task(task);
         info!("Decomposed into {} sub-tasks", sub_tasks.len());
-        
+
         // Execute sub-tasks
         let results = self.execute_parallel(&sub_tasks).await;
         info!("Completed {} sub-tasks", results.len());
-        
+
         // Fuse results
         let fused = self.fuse_results(&results);
         info!("Fused knowledge with confidence: {}", fused.confidence);
-        
+
         Ok(fused)
     }
-    
+
     /// Detect conflicts between agent outputs
     pub fn detect_conflicts(&self, results: &[SubTaskResult]) -> Vec<KnowledgeConflict> {
         let mut conflicts = Vec::new();
-        
+
         // Group results by topic
         let mut topic_results: HashMap<String, Vec<&SubTaskResult>> = HashMap::new();
-        
+
         for result in results {
             // Simple topic extraction (in production, use NLP)
-            let topic = result.result.split_whitespace()
+            let topic = result
+                .result
+                .split_whitespace()
                 .take(3)
                 .collect::<Vec<_>>()
                 .join(" ");
-            
+
             topic_results.entry(topic).or_default().push(result);
         }
-        
+
         // Check for disagreements
         for (topic, topic_results) in topic_results {
             if topic_results.len() > 1 {
-                let positions: HashMap<AgentType, String> = topic_results.iter()
+                let positions: HashMap<AgentType, String> = topic_results
+                    .iter()
                     .map(|r| (r.agent, r.result.clone()))
                     .collect();
-                
+
                 // Check if results differ
-                let unique_results: std::collections::HashSet<&String> = topic_results.iter()
-                    .map(|r| &r.result)
-                    .collect();
-                
+                let unique_results: std::collections::HashSet<&String> =
+                    topic_results.iter().map(|r| &r.result).collect();
+
                 if unique_results.len() > 1 {
                     conflicts.push(KnowledgeConflict {
                         topic,
@@ -362,34 +363,37 @@ impl CollabReasoning {
                 }
             }
         }
-        
+
         conflicts
     }
-    
+
     /// Resolve conflicts using best agent
     pub fn resolve_conflict(&self, conflict: &KnowledgeConflict) -> Option<String> {
         // Find the agent with highest confidence
-        let best_agent = conflict.positions.iter()
+        let best_agent = conflict
+            .positions
+            .iter()
             .max_by_key(|(agent, _)| {
-                self.agents.get(agent)
+                self.agents
+                    .get(agent)
                     .map(|a| (a.confidence * 100.0) as u32)
                     .unwrap_or(0)
             })
             .map(|(agent, result)| (agent, result.clone()));
-        
+
         best_agent.map(|(_, result)| result)
     }
-    
+
     /// Set fusion strategy
     pub fn set_fusion_strategy(&mut self, strategy: FusionStrategy) {
         self.fusion_strategy = strategy;
     }
-    
+
     /// Get agent capabilities
     pub fn get_agent_capabilities(&self, agent: AgentType) -> Option<&AgentCapability> {
         self.agents.get(&agent)
     }
-    
+
     /// Register a new agent
     pub fn register_agent(&mut self, capability: AgentCapability) {
         self.agents.insert(capability.agent_type, capability);

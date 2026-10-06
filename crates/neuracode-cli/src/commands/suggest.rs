@@ -7,10 +7,10 @@ use neuracode_core::{NeuraCode, NeuraCodeConfig};
 pub async fn execute(context: String, format: String) -> Result<()> {
     let config = NeuraCodeConfig::default();
     let neuracode = NeuraCode::new(config).await?;
-    
+
     // Predict context for the given task
     let context_pkg = neuracode.predict_context(&context).await?;
-    
+
     if format == "json" {
         println!("{}", serde_json::to_string_pretty(&context_pkg)?);
     } else {
@@ -19,7 +19,7 @@ pub async fn execute(context: String, format: String) -> Result<()> {
         println!("Task: {}", context.cyan());
         println!("Type: {}", context_pkg.task_type.name().yellow());
         println!();
-        
+
         if !context_pkg.relevant_files.is_empty() {
             println!("{}", "Relevant Files:".bold());
             for file in &context_pkg.relevant_files {
@@ -27,7 +27,7 @@ pub async fn execute(context: String, format: String) -> Result<()> {
             }
             println!();
         }
-        
+
         if !context_pkg.test_files.is_empty() {
             println!("{}", "Test Files:".bold());
             for file in &context_pkg.test_files {
@@ -35,13 +35,13 @@ pub async fn execute(context: String, format: String) -> Result<()> {
             }
             println!();
         }
-        
+
         if let Some(ref arch) = context_pkg.architecture {
             println!("{}", "Architecture Context:".bold());
             println!("  Pattern: {}", arch.pattern);
             println!();
         }
-        
+
         // Generate suggestions based on task type
         println!("{}", "Suggestions:".bold());
         match context_pkg.task_type {
@@ -82,6 +82,6 @@ pub async fn execute(context: String, format: String) -> Result<()> {
             }
         }
     }
-    
+
     Ok(())
 }

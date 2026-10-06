@@ -6,10 +6,10 @@ use tracing::info;
 /// Run the MCP server
 pub async fn run() -> Result<()> {
     info!("MCP Server starting...");
-    
+
     // In production, this would implement the MCP protocol
     // For now, just print a message
-    
+
     println!("NeuraCode MCP Server");
     println!("====================");
     println!();
@@ -21,7 +21,7 @@ pub async fn run() -> Result<()> {
     println!("  - neuracode_hotspots: Identify codebase hotspots");
     println!();
     println!("Note: Full MCP protocol implementation coming soon.");
-    
+
     // Keep the server running
     loop {
         tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;

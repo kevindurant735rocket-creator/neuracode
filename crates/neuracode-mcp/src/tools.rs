@@ -1,5 +1,7 @@
 //! MCP Tools
 
+#![allow(dead_code)]
+
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
@@ -187,7 +189,7 @@ pub struct Differences {
 // Export tool
 #[derive(Debug, Deserialize)]
 pub struct ExportInput {
-    pub format: String,  // json, dot, mermaid
+    pub format: String, // json, dot, mermaid
 }
 
 #[derive(Debug, Serialize)]
@@ -217,7 +219,7 @@ impl ToolRegistry {
         registry.register_tools();
         registry
     }
-    
+
     fn register_tools(&mut self) {
         self.tools.insert(
             "neuracode_search".to_string(),
@@ -240,7 +242,7 @@ impl ToolRegistry {
                 }),
             },
         );
-        
+
         self.tools.insert(
             "neuracode_predict".to_string(),
             ToolInfo {
@@ -258,7 +260,7 @@ impl ToolRegistry {
                 }),
             },
         );
-        
+
         self.tools.insert(
             "neuracode_impact".to_string(),
             ToolInfo {
@@ -276,7 +278,7 @@ impl ToolRegistry {
                 }),
             },
         );
-        
+
         self.tools.insert(
             "neuracode_architecture".to_string(),
             ToolInfo {
@@ -288,7 +290,7 @@ impl ToolRegistry {
                 }),
             },
         );
-        
+
         self.tools.insert(
             "neuracode_hotspots".to_string(),
             ToolInfo {
@@ -300,7 +302,7 @@ impl ToolRegistry {
                 }),
             },
         );
-        
+
         self.tools.insert(
             "neuracode_analyze".to_string(),
             ToolInfo {
@@ -317,7 +319,7 @@ impl ToolRegistry {
                 }),
             },
         );
-        
+
         self.tools.insert(
             "neuracode_suggest".to_string(),
             ToolInfo {
@@ -335,7 +337,7 @@ impl ToolRegistry {
                 }),
             },
         );
-        
+
         self.tools.insert(
             "neuracode_stats".to_string(),
             ToolInfo {
@@ -347,7 +349,7 @@ impl ToolRegistry {
                 }),
             },
         );
-        
+
         self.tools.insert(
             "neuracode_compare".to_string(),
             ToolInfo {
@@ -369,7 +371,7 @@ impl ToolRegistry {
                 }),
             },
         );
-        
+
         self.tools.insert(
             "neuracode_export".to_string(),
             ToolInfo {
@@ -388,11 +390,11 @@ impl ToolRegistry {
             },
         );
     }
-    
+
     pub fn list_tools(&self) -> Vec<ToolInfo> {
         self.tools.values().cloned().collect()
     }
-    
+
     pub fn get_tool(&self, name: &str) -> Option<&ToolInfo> {
         self.tools.get(name)
     }

@@ -2,42 +2,50 @@
 
 use anyhow::Result;
 use colored::Colorize;
-use neuracode_core::{NeuraCode, NeuraCodeConfig, AgentType};
+use neuracode_core::{AgentType, NeuraCode, NeuraCodeConfig};
 
 pub async fn execute(agent: Option<String>, all: bool) -> Result<()> {
     // Create configuration
     let config = NeuraCodeConfig::default();
-    
+
     // Create NeuraCode instance
     let neuracode = NeuraCode::new(config).await?;
-    
+
     if all {
         println!("Installing NeuraCode for all supported agents...\n");
-        
+
         let results = neuracode.install_all_agents().await?;
-        
+
         let mut success_count = 0;
         let mut fail_count = 0;
-        
+
         for result in &results {
             if result.success {
-                println!("{} {}: {}", "✓".green(), result.agent.name(), result.message);
+                println!(
+                    "{} {}: {}",
+                    "✓".green(),
+                    result.agent.name(),
+                    result.message
+                );
                 success_count += 1;
             } else {
                 println!("{} {}: {}", "✗".red(), result.agent.name(), result.message);
                 fail_count += 1;
             }
         }
-        
+
         println!();
-        println!("Installation complete: {} succeeded, {} failed", success_count, fail_count);
+        println!(
+            "Installation complete: {} succeeded, {} failed",
+            success_count, fail_count
+        );
     } else if let Some(agent_name) = agent {
         let agent_type = parse_agent_type(&agent_name)?;
-        
+
         println!("Installing NeuraCode for {}...\n", agent_type.name());
-        
+
         let result = neuracode.multi_agent.install_for_agent(agent_type).await;
-        
+
         if result.success {
             println!("{} {}", "✓".green(), result.message);
         } else {
@@ -46,13 +54,13 @@ pub async fn execute(agent: Option<String>, all: bool) -> Result<()> {
     } else {
         // Detect installed agents
         let installed = neuracode.multi_agent.detect_installed_agents();
-        
+
         if installed.is_empty() {
             println!("No supported agents found.");
             println!("Use --all to install for all supported agents.");
             return Ok(());
         }
-        
+
         println!("Detected agents:");
         for agent in &installed {
             println!("  - {}", agent.name());
@@ -61,7 +69,7 @@ pub async fn execute(agent: Option<String>, all: bool) -> Result<()> {
         println!("Use --all to install for all detected agents,");
         println!("or --agent <name> to install for a specific agent.");
     }
-    
+
     Ok(())
 }
 

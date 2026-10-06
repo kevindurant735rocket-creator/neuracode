@@ -196,6 +196,6 @@ class DiagramParser:
         for node in diagram.nodes:
             if node.kind == 'service':
                 code += f"class {node.label}:\n"
-                code += f    pass\n\n"
+                code += "    pass\n\n"
         
         return code

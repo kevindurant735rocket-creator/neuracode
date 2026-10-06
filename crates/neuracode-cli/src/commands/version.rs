@@ -8,10 +8,13 @@ pub async fn execute() -> Result<()> {
     println!("Version: {}", env!("CARGO_PKG_VERSION").cyan());
     println!("License: MIT");
     println!();
-    println!("{}", "The Next-Generation AI Agent Cognitive Enhancement System".dimmed());
+    println!(
+        "{}",
+        "The Next-Generation AI Agent Cognitive Enhancement System".dimmed()
+    );
     println!();
     println!("GitHub: https://github.com/neuracode/neuracode");
     println!("Docs: https://neuracode.github.io");
-    
+
     Ok(())
 }

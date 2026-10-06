@@ -7,13 +7,13 @@ use neuracode_core::{NeuraCode, NeuraCodeConfig};
 pub async fn execute(limit: usize, format: String) -> Result<()> {
     // Create configuration
     let config = NeuraCodeConfig::default();
-    
+
     // Create NeuraCode instance
     let neuracode = NeuraCode::new(config).await?;
-    
+
     // Get hotspots
     let hotspots = neuracode.code_brain.identify_hotspots().await;
-    
+
     if format == "json" {
         println!("{}", serde_json::to_string_pretty(&hotspots)?);
     } else {
@@ -21,11 +21,12 @@ pub async fn execute(limit: usize, format: String) -> Result<()> {
             println!("No hotspots found.");
             return Ok(());
         }
-        
+
         println!("Codebase Hotspots:\n");
-        
+
         for (i, hotspot) in hotspots.iter().take(limit).enumerate() {
-            println!("{}. {} ({})", 
+            println!(
+                "{}. {} ({})",
                 i + 1,
                 hotspot.node.name.cyan(),
                 hotspot.node.file_path.display()
@@ -38,6 +39,6 @@ pub async fn execute(limit: usize, format: String) -> Result<()> {
             println!();
         }
     }
-    
+
     Ok(())
 }
