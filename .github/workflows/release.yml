@@ -5,21 +5,26 @@ on:
     tags:
       - 'v*'
 
+permissions:
+  contents: write
+
 jobs:
   release:
     name: Release ${{ matrix.target }}
     runs-on: ${{ matrix.os }}
     strategy:
+      fail-fast: false
       matrix:
         include:
           - os: ubuntu-latest
             target: x86_64-unknown-linux-gnu
-          - os: macos-latest
-            target: x86_64-apple-darwin
+            bin: neuracode
           - os: macos-latest
             target: aarch64-apple-darwin
+            bin: neuracode
           - os: windows-latest
             target: x86_64-pc-windows-msvc
+            bin: neuracode.exe
 
     steps:
     - uses: actions/checkout@v4
@@ -29,21 +34,47 @@ jobs:
       with:
         targets: ${{ matrix.target }}
 
+    - name: Cache cargo
+      uses: actions/cache@v4
+      with:
+        path: |
+          ~/.cargo/registry
+          ~/.cargo/git
+          target
+        key: ${{ runner.os }}-release-${{ matrix.target }}-${{ hashFiles('**/Cargo.lock') }}
+
     - name: Build
-      run: cargo build --release --target ${{ matrix.target }}
+      run: cargo build --release --bin neuracode --target ${{ matrix.target }}
 
     - name: Package
       shell: bash
       run: |
         cd target/${{ matrix.target }}/release
-        if [ "${{ matrix.os }}" = "windows-latest" ]; then
-          7z a neuracode-${{ matrix.target }}.zip neuracode.exe
+        if [[ "${{ matrix.target }}" == *windows* ]]; then
+          7z a neuracode-${{ matrix.target }}.zip ${{ matrix.bin }}
         else
-          tar czf neuracode-${{ matrix.target }}.tar.gz neuracode
+          tar czf neuracode-${{ matrix.target }}.tar.gz ${{ matrix.bin }}
         fi
 
-    - name: Upload
-      uses: actions/upload-artifact@v3
+    - name: Upload artifact
+      uses: actions/upload-artifact@v4
       with:
         name: neuracode-${{ matrix.target }}
-        path: target/${{ matrix.target }}/release/neuracode-*
+        path: target/${{ matrix.target }}/release/neuracode-${{ matrix.target }}.*
+
+  publish:
+    name: Publish GitHub Release
+    needs: release
+    runs-on: ubuntu-latest
+    steps:
+    - name: Download artifacts
+      uses: actions/download-artifact@v4
+      with:
+        path: artifacts
+        merge-multiple: true
+
+    - name: Create Release
+      uses: softprops/action-gh-release@v2
+      with:
+        files: artifacts/*
+        generate_release_notes: true
