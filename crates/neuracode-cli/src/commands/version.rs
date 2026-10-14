@@ -3,7 +3,7 @@
 use anyhow::Result;
 use colored::Colorize;
 
-pub async fn execute() -> Result<()> {
+pub async fn execute(_config_path: Option<String>) -> Result<()> {
     println!("{}", "NeuraCode".bold());
     println!("Version: {}", env!("CARGO_PKG_VERSION").cyan());
     println!("License: MIT");

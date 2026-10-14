@@ -14,7 +14,7 @@
 ### From Source
 
 ```bash
-git clone https://github.com/neuracode/neuracode.git
+git clone https://github.com/kevindurant735rocket-creator/neuracode.git
 cd neuracode
 cargo build --release
 ```
@@ -23,7 +23,7 @@ cargo build --release
 
 ```bash
 # macOS/Linux
-curl -fsSL https://raw.githubusercontent.com/neuracode/neuracode/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/kevindurant735rocket-creator/neuracode/main/scripts/install.sh | bash
 
 # Cargo
 cargo install neuracode-cli

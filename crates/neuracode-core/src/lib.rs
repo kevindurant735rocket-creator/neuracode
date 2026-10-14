@@ -176,7 +176,75 @@ impl Default for NeuraCodeConfig {
                 "build".to_string(),
                 "__pycache__".to_string(),
                 ".venv".to_string(),
+                // Secrets — never indexed (see docs/privacy.md)
+                ".env".to_string(),
+                ".env.".to_string(),
+                "id_rsa".to_string(),
+                "id_ed25519".to_string(),
+                ".pem".to_string(),
+                ".key".to_string(),
+                "credentials.json".to_string(),
+                "secrets.yaml".to_string(),
             ],
         }
     }
+}
+
+impl NeuraCodeConfig {
+    /// Load config from explicit path, `.neuracode/config.toml` in cwd, or default.
+    /// Never panics; falls back to Default on any error.
+    pub fn load_or_default(explicit: Option<String>) -> Self {
+        // 1. Explicit --config path
+        if let Some(p) = explicit {
+            let pb = std::path::PathBuf::from(shellexpand_or(&p));
+            if let Ok(content) = std::fs::read_to_string(&pb) {
+                if let Ok(cfg) = toml::from_str::<NeuraCodeConfig>(&content) {
+                    return cfg;
+                }
+            }
+            return Self::default();
+        }
+        // 2. Project-local .neuracode/config.toml (TOML with subset of fields).
+        //    Initialized projects get an isolated DB under ./.neuracode/db
+        //    so multiple checkouts never share one global database.
+        let local = std::path::Path::new(".neuracode/config.toml");
+        if local.exists() {
+            if let Ok(content) = std::fs::read_to_string(local) {
+                // Parse leniently: only override known simple keys
+                if let Ok(v) = toml::from_str::<toml::Value>(&content) {
+                    let mut cfg = NeuraCodeConfig {
+                        db_path: std::path::PathBuf::from(".neuracode/db"),
+                        ..Self::default()
+                    };
+                    if let Some(mb) = v.get("cache_size_mb").and_then(|x| x.as_integer()) {
+                        cfg.cache_size_mb = mb.max(0) as usize;
+                    }
+                    if let Some(mf) = v.get("max_file_size").and_then(|x| x.as_integer()) {
+                        cfg.max_file_size = mf.max(0) as u64;
+                    }
+                    for key in ["enable_prediction", "enable_learning", "enable_multimodal"] {
+                        if let Some(b) = v.get(key).and_then(|x| x.as_bool()) {
+                            match key {
+                                "enable_prediction" => cfg.enable_prediction = b,
+                                "enable_learning" => cfg.enable_learning = b,
+                                "enable_multimodal" => cfg.enable_multimodal = b,
+                                _ => {}
+                            }
+                        }
+                    }
+                    return cfg;
+                }
+            }
+        }
+        Self::default()
+    }
+}
+
+fn shellexpand_or(p: &str) -> String {
+    if p.starts_with('~') {
+        if let Some(home) = dirs::home_dir() {
+            return p.replacen('~', &home.to_string_lossy(), 1);
+        }
+    }
+    p.to_string()
 }

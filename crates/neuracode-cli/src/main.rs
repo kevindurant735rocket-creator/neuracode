@@ -131,9 +131,10 @@ enum Commands {
     /// Show statistics
     Stats,
 
-    /// Start MCP server
+    /// Start MCP server (stdio transport; --port is accepted for
+    /// docker/compose compatibility but currently unused)
     Serve {
-        /// Port to listen on
+        /// Port to listen on (reserved for future HTTP transport)
         #[arg(short, long, default_value = "3000")]
         port: u16,
     },
@@ -220,66 +221,66 @@ async fn main() -> anyhow::Result<()> {
             commands::init::execute(path).await?;
         }
         Commands::Index { path, force } => {
-            commands::index::execute(path, force).await?;
+            commands::index::execute(cli.config.clone(), path, force).await?;
         }
         Commands::Search {
             query,
             limit,
             format,
         } => {
-            commands::search::execute(query, limit, format).await?;
+            commands::search::execute(cli.config.clone(), query, limit, format).await?;
         }
         Commands::Predict { task, format } => {
-            commands::predict::execute(task, format).await?;
+            commands::predict::execute(cli.config.clone(), task, format).await?;
         }
         Commands::Impact { target, format } => {
-            commands::impact::execute(target, format).await?;
+            commands::impact::execute(cli.config.clone(), target, format).await?;
         }
         Commands::Architecture { format } => {
-            commands::architecture::execute(format).await?;
+            commands::architecture::execute(cli.config.clone(), format).await?;
         }
         Commands::Hotspots { limit, format } => {
-            commands::hotspots::execute(limit, format).await?;
+            commands::hotspots::execute(cli.config.clone(), limit, format).await?;
         }
         Commands::Understand { path, format } => {
-            commands::understand::execute(path, format).await?;
+            commands::understand::execute(cli.config.clone(), path, format).await?;
         }
         Commands::Install { agent, all } => {
-            commands::install::execute(agent, all).await?;
+            commands::install::execute(cli.config.clone(), agent, all).await?;
         }
         Commands::Uninstall { agent, all } => {
-            commands::uninstall::execute(agent, all).await?;
+            commands::uninstall::execute(cli.config.clone(), agent, all).await?;
         }
         Commands::Stats => {
-            commands::stats::execute().await?;
+            commands::stats::execute(cli.config.clone()).await?;
         }
         Commands::Serve { port } => {
-            commands::serve::execute(port).await?;
+            commands::serve::execute(cli.config.clone(), port).await?;
         }
         Commands::Config { full } => {
             commands::config::execute(full).await?;
         }
         Commands::Analyze { path, format } => {
-            commands::analyze::execute(path, format).await?;
+            commands::analyze::execute(cli.config.clone(), path, format).await?;
         }
         Commands::Export { output, format } => {
-            commands::export::execute(output, format).await?;
+            commands::export::execute(cli.config.clone(), output, format).await?;
         }
         Commands::Watch { path } => {
-            commands::watch::execute(path).await?;
+            commands::watch::execute(cli.config.clone(), path).await?;
         }
         Commands::Compare {
             path1,
             path2,
             format,
         } => {
-            commands::compare::execute(path1, path2, format).await?;
+            commands::compare::execute(cli.config.clone(), path1, path2, format).await?;
         }
         Commands::Suggest { context, format } => {
-            commands::suggest::execute(context, format).await?;
+            commands::suggest::execute(cli.config.clone(), context, format).await?;
         }
         Commands::Version => {
-            commands::version::execute().await?;
+            commands::version::execute(cli.config.clone()).await?;
         }
     }
 

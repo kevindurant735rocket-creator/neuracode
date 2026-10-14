@@ -5,8 +5,8 @@ use colored::Colorize;
 use neuracode_core::{NeuraCode, NeuraCodeConfig};
 use std::path::Path;
 
-pub async fn execute(output: String, format: String) -> Result<()> {
-    let config = NeuraCodeConfig::default();
+pub async fn execute(config_path: Option<String>, output: String, format: String) -> Result<()> {
+    let config = NeuraCodeConfig::load_or_default(config_path);
     let neuracode = NeuraCode::new(config).await?;
 
     let output_path = Path::new(&output);

@@ -8,6 +8,7 @@ use crate::NeuraCodeConfig;
 use dashmap::DashMap;
 use parking_lot::RwLock;
 use rusqlite::{params, Connection};
+use std::collections::HashMap;
 use std::sync::Arc;
 use tracing::{info, instrument};
 use uuid::Uuid;
@@ -305,8 +306,117 @@ impl LearnEngine {
         // Accumulate knowledge
         self.accumulate_knowledge(session).await?;
 
+        // Learn from file access patterns
+        self.learn_file_access_patterns(session).await?;
+
+        // Learn from error patterns
+        self.learn_error_patterns(session).await?;
+
         info!("Learning completed for session: {}", session.id);
         Ok(())
+    }
+
+    /// Learn file access patterns
+    async fn learn_file_access_patterns(&self, session: &Session) -> Result<()> {
+        // Track which files are accessed together
+        let mut file_pairs: HashMap<(String, String), u32> = HashMap::new();
+
+        for interaction in &session.interactions {
+            if let InteractionKind::Navigation = interaction.kind {
+                let file = interaction.content.clone();
+                // Simple pair tracking
+                for other in &session.interactions {
+                    if let InteractionKind::Navigation = other.kind {
+                        let other_file = other.content.clone();
+                        if file != other_file {
+                            let pair = if file < other_file {
+                                (file.clone(), other_file.clone())
+                            } else {
+                                (other_file.clone(), file.clone())
+                            };
+                            *file_pairs.entry(pair).or_default() += 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        // Store frequently co-accessed files
+        for ((file1, file2), count) in file_pairs {
+            if count > 3 {
+                let knowledge = Knowledge {
+                    id: Uuid::new_v4(),
+                    kind: KnowledgeKind::ProjectContext,
+                    content: format!(
+                        "Files {} and {} are often accessed together ({} times)",
+                        file1, file2, count
+                    ),
+                    source: format!("session:{}", session.id),
+                    confidence: (count as f32 / 10.0).min(0.9),
+                    created_at: chrono::Utc::now(),
+                    updated_at: chrono::Utc::now(),
+                    tags: vec!["file_pattern".to_string(), file1.clone(), file2.clone()],
+                    related: vec![],
+                };
+                self.add_knowledge(knowledge).await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Learn error patterns
+    async fn learn_error_patterns(&self, session: &Session) -> Result<()> {
+        let mut error_counts: HashMap<String, u32> = HashMap::new();
+
+        for interaction in &session.interactions {
+            if let InteractionKind::Error = interaction.kind {
+                // Extract error type
+                let error_type = self.extract_error_type(&interaction.content);
+                *error_counts.entry(error_type).or_default() += 1;
+            }
+        }
+
+        // Store recurring errors
+        for (error_type, count) in error_counts {
+            if count > 2 {
+                let knowledge = Knowledge {
+                    id: Uuid::new_v4(),
+                    kind: KnowledgeKind::BugFix,
+                    content: format!("Recurring error: {} (occurred {} times)", error_type, count),
+                    source: format!("session:{}", session.id),
+                    confidence: (count as f32 / 10.0).min(0.9),
+                    created_at: chrono::Utc::now(),
+                    updated_at: chrono::Utc::now(),
+                    tags: vec!["error_pattern".to_string(), error_type.clone()],
+                    related: vec![],
+                };
+                self.add_knowledge(knowledge).await?;
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Extract error type from error message
+    fn extract_error_type(&self, error: &str) -> String {
+        let error_lower = error.to_lowercase();
+
+        if error_lower.contains("null") || error_lower.contains("none") {
+            "NullPointer".to_string()
+        } else if error_lower.contains("type") || error_lower.contains("mismatch") {
+            "TypeMismatch".to_string()
+        } else if error_lower.contains("index") || error_lower.contains("out of bounds") {
+            "IndexOutOfBounds".to_string()
+        } else if error_lower.contains("io") || error_lower.contains("file") {
+            "IOError".to_string()
+        } else if error_lower.contains("network") || error_lower.contains("connection") {
+            "NetworkError".to_string()
+        } else if error_lower.contains("permission") || error_lower.contains("access") {
+            "PermissionError".to_string()
+        } else {
+            "Unknown".to_string()
+        }
     }
 
     /// Learn code style from changes

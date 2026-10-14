@@ -4,7 +4,7 @@ use anyhow::Result;
 use neuracode_core::{NeuraCode, NeuraCodeConfig};
 use std::path::Path;
 
-pub async fn execute(path: String, format: String) -> Result<()> {
+pub async fn execute(config_path: Option<String>, path: String, format: String) -> Result<()> {
     let image_path = Path::new(&path);
 
     if !image_path.exists() {
@@ -12,7 +12,7 @@ pub async fn execute(path: String, format: String) -> Result<()> {
     }
 
     // Create configuration
-    let config = NeuraCodeConfig::default();
+    let config = NeuraCodeConfig::load_or_default(config_path);
 
     // Create NeuraCode instance
     let neuracode = NeuraCode::new(config).await?;

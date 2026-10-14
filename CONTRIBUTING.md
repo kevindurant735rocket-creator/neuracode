@@ -190,8 +190,8 @@ Include:
 
 If you have questions, please:
 1. Check the [documentation](docs/)
-2. Search [existing issues](https://github.com/neuracode/neuracode/issues)
-3. Ask in [Discussions](https://github.com/neuracode/neuracode/discussions)
+2. Search [existing issues](https://github.com/kevindurant735rocket-creator/neuracode/issues)
+3. Ask in [Discussions](https://github.com/kevindurant735rocket-creator/neuracode/discussions)
 4. Join our [Discord](https://discord.gg/neuracode)
 
 Thank you for contributing to NeuraCode!

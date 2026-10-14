@@ -2,14 +2,26 @@
 
 use std::path::Path;
 
-/// Calculate file hash for caching
+/// Calculate file hash for caching — streaming, avoids loading whole file
 pub fn file_hash(path: &Path) -> Option<String> {
     use std::collections::hash_map::DefaultHasher;
     use std::hash::{Hash, Hasher};
+    use std::io::Read;
 
-    let content = std::fs::read(path).ok()?;
+    let mut file = std::fs::File::open(path).ok()?;
     let mut hasher = DefaultHasher::new();
-    content.hash(&mut hasher);
+    // Include length prefix to reduce collision across sizes
+    if let Ok(meta) = file.metadata() {
+        meta.len().hash(&mut hasher);
+    }
+    let mut buf = [0u8; 8192];
+    loop {
+        match file.read(&mut buf) {
+            Ok(0) => break,
+            Ok(n) => buf[..n].hash(&mut hasher),
+            Err(_) => return None,
+        }
+    }
     Some(format!("{:x}", hasher.finish()))
 }
 
@@ -43,19 +55,37 @@ pub fn format_bytes(bytes: u64) -> String {
     format!("{:.2} {}", value, UNITS[exp])
 }
 
-/// Truncate string to max length
+/// Truncate string to max length (char-based, UTF-8 safe)
 pub fn truncate(s: &str, max_len: usize) -> String {
-    if s.len() <= max_len {
+    let count = s.chars().count();
+    if count <= max_len {
         s.to_string()
     } else {
-        format!("{}...", &s[..max_len.saturating_sub(3)])
+        let keep = max_len.saturating_sub(3);
+        let truncated: String = s.chars().take(keep).collect();
+        format!("{}...", truncated)
     }
 }
 
-/// Check if a path should be ignored
+/// Check if a path should be ignored — matches full components, not substrings
 pub fn should_ignore(path: &Path, patterns: &[String]) -> bool {
-    let path_str = path.to_string_lossy();
-    patterns.iter().any(|p| path_str.contains(p))
+    let components: Vec<String> = path
+        .components()
+        .map(|c| c.as_os_str().to_string_lossy().to_string())
+        .collect();
+    let path_str = path.to_string_lossy().to_string();
+    patterns.iter().any(|p| {
+        // Exact component match (fixes `target` killing `my-target-file.rs`)
+        if components.iter().any(|c| c == p) {
+            return true;
+        }
+        // Allow explicit glob-ish suffix/prefix patterns, else substring on separators
+        if p.contains('/') || p.starts_with('.') {
+            return path_str.contains(p);
+        }
+        // Fallback: match as path segment
+        path_str.split('/').any(|seg| seg == p)
+    })
 }
 
 /// Normalize path for cross-platform compatibility

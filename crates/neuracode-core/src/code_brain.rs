@@ -63,13 +63,198 @@ impl CodeBrain {
         // Initialize schema
         Self::init_database(&conn)?;
 
-        Ok(Self {
+        let brain = Self {
             config: config.clone(),
             graph: Arc::new(RwLock::new(CodeGraph::default())),
             file_index: Arc::new(DashMap::new()),
             name_index: Arc::new(DashMap::new()),
             db: Arc::new(parking_lot::Mutex::new(conn)),
-        })
+        };
+
+        // Load existing data from database
+        brain.load_from_database()?;
+
+        Ok(brain)
+    }
+
+    /// Load existing data from database
+    fn load_from_database(&self) -> Result<()> {
+        let db = self.db.lock();
+
+        // Load nodes
+        let mut stmt = db.prepare(
+            "SELECT id, name, kind, file_path, start_line, start_column, end_line, end_column,
+             language, signature, documentation, visibility, metadata FROM nodes",
+        )?;
+
+        let node_iter = stmt.query_map([], |row| {
+            let id: String = row.get(0)?;
+            let name: String = row.get(1)?;
+            let kind: String = row.get(2)?;
+            let file_path: String = row.get(3)?;
+            let start_line: i64 = row.get(4)?;
+            let start_column: i64 = row.get(5)?;
+            let end_line: i64 = row.get(6)?;
+            let end_column: i64 = row.get(7)?;
+            let language: String = row.get(8)?;
+            let signature: Option<String> = row.get(9)?;
+            let documentation: Option<String> = row.get(10)?;
+            let visibility: String = row.get(11)?;
+            let metadata: Option<String> = row.get(12)?;
+
+            Ok((
+                id,
+                name,
+                kind,
+                file_path,
+                start_line,
+                start_column,
+                end_line,
+                end_column,
+                language,
+                signature,
+                documentation,
+                visibility,
+                metadata,
+            ))
+        })?;
+
+        let mut nodes = Vec::new();
+        for node in node_iter {
+            let (
+                id,
+                name,
+                kind,
+                file_path,
+                start_line,
+                start_column,
+                end_line,
+                end_column,
+                language,
+                signature,
+                documentation,
+                visibility,
+                metadata_str,
+            ) = node?;
+
+            let kind = NodeKind::from_name(&kind).unwrap_or(NodeKind::File);
+            let language = Language::from_name(&language);
+            let visibility = match visibility.as_str() {
+                "Public" => Visibility::Public,
+                "Private" => Visibility::Private,
+                "Protected" => Visibility::Protected,
+                _ => Visibility::Public,
+            };
+
+            let metadata: NodeMetadata = metadata_str
+                .and_then(|s| serde_json::from_str(&s).ok())
+                .unwrap_or_default();
+
+            let uid = match Uuid::parse_str(&id) {
+                Ok(u) => u,
+                Err(_) => {
+                    tracing::warn!("Skipping node with invalid UUID: {}", id);
+                    continue;
+                }
+            };
+            let node = CodeNode {
+                id: uid,
+                name,
+                kind,
+                file_path: Self::normalize_path(Path::new(&file_path)),
+                location: SourceLocation {
+                    start_line: start_line as usize,
+                    start_column: start_column as usize,
+                    end_line: end_line as usize,
+                    end_column: end_column as usize,
+                },
+                language,
+                signature,
+                documentation,
+                visibility,
+                metadata,
+                embedding: None,
+            };
+
+            nodes.push(node);
+        }
+
+        // Load edges
+        let mut stmt =
+            db.prepare("SELECT id, source, target, kind, weight, metadata FROM edges")?;
+
+        let edge_iter = stmt.query_map([], |row| {
+            let id: String = row.get(0)?;
+            let source: String = row.get(1)?;
+            let target: String = row.get(2)?;
+            let kind: String = row.get(3)?;
+            let weight: f64 = row.get(4)?;
+            let metadata: Option<String> = row.get(5)?;
+
+            Ok((id, source, target, kind, weight, metadata))
+        })?;
+
+        let mut edges = Vec::new();
+        for edge in edge_iter {
+            let (id, source, target, kind, weight, metadata_str) = edge?;
+
+            let kind = EdgeKind::from_name(&kind).unwrap_or(EdgeKind::References);
+            let metadata: EdgeMetadata = metadata_str
+                .and_then(|s| serde_json::from_str(&s).ok())
+                .unwrap_or_default();
+
+            let (eid, esrc, etgt) = match (
+                Uuid::parse_str(&id),
+                Uuid::parse_str(&source),
+                Uuid::parse_str(&target),
+            ) {
+                (Ok(a), Ok(b), Ok(c)) => (a, b, c),
+                _ => {
+                    tracing::warn!("Skipping edge with invalid UUID: {} -> {}", source, target);
+                    continue;
+                }
+            };
+            let edge = CodeEdge {
+                id: eid,
+                source: esrc,
+                target: etgt,
+                kind,
+                weight: weight as f32,
+                metadata,
+            };
+
+            edges.push(edge);
+        }
+
+        // Update in-memory graph
+        {
+            let mut graph = self.graph.write();
+            for node in &nodes {
+                graph.nodes.insert(node.id, node.clone());
+            }
+            graph.edges = edges.clone();
+        }
+
+        // Update indexes
+        for node in &nodes {
+            self.file_index
+                .entry(node.file_path.clone())
+                .or_default()
+                .push(node.id);
+
+            self.name_index
+                .entry(node.name.clone())
+                .or_default()
+                .push(node.id);
+        }
+
+        info!(
+            "Loaded {} nodes and {} edges from database",
+            nodes.len(),
+            edges.len()
+        );
+
+        Ok(())
     }
 
     /// Get tree-sitter language for a given Language
@@ -151,11 +336,28 @@ impl CodeBrain {
         info!("Found {} files to index", files.len());
 
         // Parse files in parallel
-        let nodes = files
+        let raw_nodes = files
             .par_iter()
             .filter_map(|file| self.parse_file(file).ok())
             .flatten()
             .collect::<Vec<_>>();
+
+        // Deduplicate within single batch by (file, name, kind, location)
+        let mut seen = HashSet::new();
+        let mut nodes = Vec::with_capacity(raw_nodes.len());
+        for n in raw_nodes {
+            let key = (
+                n.file_path.clone(),
+                n.name.clone(),
+                n.kind,
+                n.location.start_line,
+                n.location.start_column,
+                n.location.end_line,
+            );
+            if seen.insert(key) {
+                nodes.push(n);
+            }
+        }
 
         info!("Created {} nodes", nodes.len());
 
@@ -163,16 +365,46 @@ impl CodeBrain {
         let edges = self.build_edges(&nodes);
         info!("Created {} edges", edges.len());
 
-        // Update in-memory graph
+        // Remove stale nodes for re-indexed files (deduplicate by file_path+name+location)
         {
             let mut graph = self.graph.write();
+            let reindexed: HashSet<PathBuf> = files.iter().cloned().collect();
+            // Collect stale ids
+            let stale_ids: Vec<Uuid> = graph
+                .nodes
+                .values()
+                .filter(|n| reindexed.contains(&n.file_path))
+                .map(|n| n.id)
+                .collect();
+            let stale_set: HashSet<Uuid> = stale_ids.iter().cloned().collect();
+            for sid in &stale_ids {
+                graph.nodes.remove(sid);
+            }
+            // Drop edges touching stale nodes (will be replaced by fresh build)
+            graph
+                .edges
+                .retain(|e| !stale_set.contains(&e.source) && !stale_set.contains(&e.target));
             for node in &nodes {
                 graph.nodes.insert(node.id, node.clone());
             }
-            graph.edges = edges.clone();
+            // Merge edges: keep old edges for untouched files + new edges
+            graph.edges.extend(edges.clone());
         }
 
-        // Update indexes
+        // Update indexes — rebuild entries for re-indexed files to avoid duplicates
+        for f in &files {
+            self.file_index.remove(f);
+        }
+        // Rebuild name index entries for affected names
+        let affected_names: HashSet<String> = nodes.iter().map(|n| n.name.clone()).collect();
+        for name in &affected_names {
+            if let Some(mut entry) = self.name_index.get_mut(name) {
+                entry.retain(|id| {
+                    // keep ids that still exist in graph
+                    self.graph.read().nodes.contains_key(id)
+                });
+            }
+        }
         for node in &nodes {
             self.file_index
                 .entry(node.file_path.clone())
@@ -185,7 +417,12 @@ impl CodeBrain {
                 .push(node.id);
         }
 
-        // Persist to database
+        // Persist to database — first purge stale rows for re-indexed files.
+        // Normalize paths so `./crates/x` and `crates/x` don't create parallel universes.
+        let normalized_files: Vec<PathBuf> =
+            files.iter().map(|f| Self::normalize_path(f)).collect();
+        self.purge_files_from_db(&normalized_files)?;
+        // Store normalized paths in memory graph as well (nodes already carry them via parse_file)
         self.persist_nodes(&nodes)?;
         self.persist_edges(&edges)?;
 
@@ -228,7 +465,7 @@ impl CodeBrain {
                         // Check file size
                         if let Ok(metadata) = entry.metadata() {
                             if metadata.len() <= self.config.max_file_size {
-                                files.push(path.to_path_buf());
+                                files.push(Self::normalize_path(path));
                             }
                         }
                     }
@@ -241,7 +478,9 @@ impl CodeBrain {
 
     /// Parse a single file
     fn parse_file(&self, path: &Path) -> Result<Vec<CodeNode>> {
-        let content = std::fs::read_to_string(path)?;
+        let norm_path = Self::normalize_path(path);
+        let content =
+            std::fs::read_to_string(&norm_path).or_else(|_| std::fs::read_to_string(path))?;
         let ext = path
             .extension()
             .and_then(|e| e.to_str())
@@ -258,7 +497,7 @@ impl CodeBrain {
             if parser.set_language(ts_lang).is_ok() {
                 if let Some(tree) = parser.parse(&content, None) {
                     let mut cursor = tree.walk();
-                    self.extract_nodes(&mut cursor, &content, path, language, &mut nodes);
+                    self.extract_nodes(&mut cursor, &content, &norm_path, language, &mut nodes);
                 }
             }
         }
@@ -266,13 +505,13 @@ impl CodeBrain {
         // Always add file node
         nodes.push(CodeNode {
             id: Uuid::new_v4(),
-            name: path
+            name: norm_path
                 .file_name()
                 .and_then(|n| n.to_str())
                 .unwrap_or("unknown")
                 .to_string(),
             kind: NodeKind::File,
-            file_path: path.to_path_buf(),
+            file_path: norm_path.clone(),
             location: SourceLocation {
                 start_line: 0,
                 start_column: 0,
@@ -561,43 +800,69 @@ impl CodeBrain {
         complexity
     }
 
-    /// Build edges between nodes
+    /// Build edges between nodes — file contents cached once, O(F*N) not O(N*M*IO)
     fn build_edges(&self, nodes: &[CodeNode]) -> Vec<CodeEdge> {
         let mut edges = Vec::new();
         let mut node_map: HashMap<String, Vec<&CodeNode>> = HashMap::new();
 
-        // Group nodes by name
+        // Group nodes by name (skip very short / file nodes to cut noise)
         for node in nodes {
+            if node.kind == NodeKind::File || node.name.len() < 3 {
+                continue;
+            }
             node_map.entry(node.name.clone()).or_default().push(node);
         }
+        if node_map.is_empty() {
+            return edges;
+        }
 
-        // Build call edges
+        // Map file -> nodes in that file (only non-file nodes)
+        let mut file_nodes: HashMap<PathBuf, Vec<&CodeNode>> = HashMap::new();
         for node in nodes {
             if node.kind == NodeKind::File {
                 continue;
             }
+            file_nodes
+                .entry(node.file_path.clone())
+                .or_default()
+                .push(node);
+        }
+        // Cache file contents once
+        let mut file_cache: HashMap<PathBuf, String> = HashMap::new();
+        for fp in file_nodes.keys() {
+            if let Ok(c) = std::fs::read_to_string(fp) {
+                file_cache.insert(fp.clone(), c);
+            }
+        }
 
-            // Find references to other nodes
+        // For each file content, check which names appear (single scan per file)
+        for (fp, content) in &file_cache {
+            let nodelist = match file_nodes.get(fp) {
+                Some(v) => v,
+                None => continue,
+            };
             for (name, targets) in &node_map {
-                if name == &node.name {
+                if name.len() < 3 || !content.contains(name.as_str()) {
                     continue;
                 }
-
-                // Check if this node references the target
-                if let Ok(content) = std::fs::read_to_string(&node.file_path) {
-                    if content.contains(name) {
-                        for target in targets {
-                            edges.push(CodeEdge {
-                                id: Uuid::new_v4(),
-                                source: node.id,
-                                target: target.id,
-                                kind: EdgeKind::References,
-                                weight: 1.0,
-                                metadata: EdgeMetadata {
-                                    confidence: 0.5,
-                                    ..Default::default()
-                                },
-                            });
+                for src in nodelist {
+                    if src.name == *name {
+                        continue;
+                    }
+                    for target in targets.iter().take(3) {
+                        edges.push(CodeEdge {
+                            id: Uuid::new_v4(),
+                            source: src.id,
+                            target: target.id,
+                            kind: EdgeKind::References,
+                            weight: 1.0,
+                            metadata: EdgeMetadata {
+                                confidence: 0.5,
+                                ..Default::default()
+                            },
+                        });
+                        if edges.len() >= 10000 {
+                            return edges;
                         }
                     }
                 }
@@ -643,6 +908,75 @@ impl CodeBrain {
             languages.insert(node.language);
         }
         languages.into_iter().collect()
+    }
+
+    /// Normalize a file path for stable identity: prefer absolute canonical path,
+    /// fallback to `./`-stripped relative.
+    fn normalize_path(p: &Path) -> PathBuf {
+        if let Ok(canon) = std::fs::canonicalize(p) {
+            return canon;
+        }
+        let s = p.to_string_lossy();
+        let stripped = s.strip_prefix("./").unwrap_or(&s);
+        PathBuf::from(stripped)
+    }
+
+    /// Persist nodes to database
+    fn purge_files_from_db(&self, files: &[PathBuf]) -> Result<()> {
+        if files.is_empty() {
+            return Ok(());
+        }
+        let db = self.db.lock();
+        let cwd = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        // Delete nodes for these files; match absolute + relative + `./`-prefixed legacy rows.
+        // NOTE: edges must go first — schema has FK edges->nodes, deleting nodes first
+        // fails with FOREIGN KEY constraint and silently keeps duplicates.
+        for f in files {
+            let abs = f.to_string_lossy().to_string();
+            let mut candidates = vec![abs.clone()];
+            if let Ok(rel) = f.strip_prefix(&cwd) {
+                let r = rel.to_string_lossy().to_string();
+                candidates.push(r.clone());
+                candidates.push(format!("./{}", r));
+            }
+            if let Some(pos) = abs.find("/crates/") {
+                candidates.push(abs[pos + 1..].to_string());
+                candidates.push(format!("./{}", &abs[pos + 1..]));
+            } else if let Some(pos) = abs.find("/tests/") {
+                candidates.push(abs[pos + 1..].to_string());
+                candidates.push(format!("./{}", &abs[pos + 1..]));
+            }
+            // Build one IN-list for both deletes
+            let placeholders = candidates.iter().map(|_| "?").collect::<Vec<_>>().join(",");
+            let sql_edges = format!(
+                "DELETE FROM edges WHERE source IN (SELECT id FROM nodes WHERE file_path IN ({})) OR target IN (SELECT id FROM nodes WHERE file_path IN ({}))",
+                placeholders, placeholders
+            );
+            let mut par: Vec<&dyn rusqlite::ToSql> = Vec::new();
+            for c in &candidates {
+                par.push(c);
+            }
+            for c in &candidates {
+                par.push(c);
+            }
+            if let Err(e) = db.execute(&sql_edges, par.as_slice()) {
+                tracing::warn!("purge edges failed: {}", e);
+            }
+            let sql_nodes = format!("DELETE FROM nodes WHERE file_path IN ({})", placeholders);
+            let par2: Vec<&dyn rusqlite::ToSql> = candidates
+                .iter()
+                .map(|c| c as &dyn rusqlite::ToSql)
+                .collect();
+            if let Err(e) = db.execute(&sql_nodes, par2.as_slice()) {
+                tracing::warn!("purge nodes failed: {}", e);
+            }
+        }
+        // Remove orphan edges whose endpoints no longer exist
+        let _ = db.execute(
+            "DELETE FROM edges WHERE source NOT IN (SELECT id FROM nodes) OR target NOT IN (SELECT id FROM nodes)",
+            [],
+        );
+        Ok(())
     }
 
     /// Persist nodes to database
@@ -717,69 +1051,248 @@ impl CodeBrain {
         Ok(())
     }
 
-    /// Semantic search across the codebase
+    /// Semantic search across the codebase — scores under lock, reads files after unlock
     #[instrument(skip(self))]
     pub async fn semantic_search(&self, query: &str) -> Result<Vec<SearchResult>> {
         debug!("Searching for: {}", query);
 
-        let graph = self.graph.read();
-        let mut results = Vec::new();
+        // Phase 1: score under short read lock (no IO)
+        let scored: Vec<(CodeNode, f32)> = {
+            let graph = self.graph.read();
+            let mut scored = Vec::new();
 
-        // Simple keyword matching (in production, use embeddings)
-        let query_lower = query.to_lowercase();
-        let query_terms: Vec<&str> = query_lower.split_whitespace().collect();
+            // Enhanced query processing
+            let query_lower = query.to_lowercase();
+            let query_terms: Vec<String> = query_lower
+                .split_whitespace()
+                .map(|s| s.to_string())
+                .filter(|s| s.len() > 1) // Filter out single chars
+                .collect();
 
-        for node in graph.nodes.values() {
-            let name_lower = node.name.to_lowercase();
-            let mut score = 0.0;
+            // Remove common stop words
+            let stop_words: HashSet<&str> = [
+                "the", "a", "an", "and", "or", "but", "in", "on", "at", "to", "for", "of", "with",
+                "by", "from", "as", "is", "was", "are", "were", "be", "been", "being", "have",
+                "has", "had", "do", "does", "did", "will", "would", "could", "should", "may",
+                "might", "must", "can", "this", "that", "these", "those", "i", "you", "he", "she",
+                "it", "we", "they",
+            ]
+            .iter()
+            .cloned()
+            .collect();
 
-            // Name match
-            if name_lower.contains(&query_lower) {
-                score += 10.0;
-            }
+            let filtered_terms: Vec<String> = query_terms
+                .iter()
+                .filter(|t| !stop_words.contains(t.as_str()))
+                .cloned()
+                .collect();
 
-            // Term match
-            for term in &query_terms {
-                if name_lower.contains(term) {
-                    score += 2.0;
+            for node in graph.nodes.values() {
+                let name_lower = node.name.to_lowercase();
+                let mut score = 0.0;
+                let mut matched_terms = 0;
+
+                // Exact phrase match (highest priority)
+                if name_lower.contains(&query_lower) {
+                    score += 20.0;
+                    matched_terms = filtered_terms.len();
                 }
-            }
 
-            // Signature match
-            if let Some(ref sig) = node.signature {
-                let sig_lower = sig.to_lowercase();
-                for term in &query_terms {
-                    if sig_lower.contains(term) {
-                        score += 1.0;
+                // Term matching with fuzzy logic
+                for term in &filtered_terms {
+                    // Exact term match in name
+                    if name_lower.contains(term.as_str()) {
+                        score += 5.0;
+                        matched_terms += 1;
+                    }
+                    // Prefix match
+                    else if name_lower.starts_with(term.as_str()) {
+                        score += 3.0;
+                        matched_terms += 1;
+                    }
+                    // Suffix match
+                    else if name_lower.ends_with(term.as_str()) {
+                        score += 2.0;
+                        matched_terms += 1;
+                    }
+                    // Stem match (authentication <-> authenticate_user): strip common suffixes
+                    else if Self::stem_contains(&name_lower, term.as_str()) {
+                        score += 2.5;
+                        matched_terms += 1;
+                    }
+                    // Fuzzy match (Levenshtein-like)
+                    else if self.fuzzy_match(&name_lower, term.as_str(), 2) {
+                        score += 1.5;
+                        matched_terms += 1;
                     }
                 }
-            }
 
-            if score > 0.0 {
-                // Get context
-                let context = self.get_node_context(node);
+                // Signature match
+                if let Some(ref sig) = node.signature {
+                    let sig_lower = sig.to_lowercase();
+                    for term in &filtered_terms {
+                        if sig_lower.contains(term.as_str()) {
+                            score += 2.0;
+                        }
+                    }
+                }
 
-                results.push(SearchResult {
-                    node: node.clone(),
-                    score,
-                    context,
-                });
+                // Documentation match
+                if let Some(ref doc) = node.documentation {
+                    let doc_lower = doc.to_lowercase();
+                    for term in &filtered_terms {
+                        if doc_lower.contains(term.as_str()) {
+                            score += 1.0;
+                        }
+                    }
+                }
+
+                // Kind-based boosting
+                match node.kind {
+                    NodeKind::Function | NodeKind::Method => score *= 1.2,
+                    NodeKind::Class | NodeKind::Struct => score *= 1.1,
+                    _ => {}
+                }
+
+                // Visibility boosting (public APIs more important)
+                if node.visibility == Visibility::Public {
+                    score *= 1.1;
+                }
+
+                // Complexity-based boosting (complex functions more important)
+                if let Some(complexity) = node.metadata.complexity {
+                    if complexity > 5 {
+                        score *= 1.0 + (complexity as f32 * 0.01);
+                    }
+                }
+
+                // Coverage bonus (matched terms / total terms)
+                if !filtered_terms.is_empty() {
+                    let coverage = matched_terms as f32 / filtered_terms.len() as f32;
+                    score *= 1.0 + coverage;
+                }
+
+                if score > 0.0 {
+                    scored.push((node.clone(), score));
+                }
             }
+            scored
+        };
+
+        // Phase 2: sort + truncate before IO, then attach context without holding lock
+        let mut scored = scored;
+        scored.sort_by(|a, b| b.1.partial_cmp(&a.1).unwrap_or(std::cmp::Ordering::Equal));
+        scored.truncate(20);
+        let mut results = Vec::with_capacity(scored.len());
+        for (node, score) in scored {
+            let context = self.get_node_context(&node);
+            results.push(SearchResult {
+                node,
+                score,
+                context,
+            });
         }
-
-        // Sort by score
-        results.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
-        results.truncate(20);
 
         Ok(results)
     }
 
-    /// Get context for a node
+    /// Fuzzy string matching with max edit distance (char-based, UTF-8 safe)
+    fn stem_of(s: &str) -> String {
+        let mut stem = s.to_string();
+        for suffix in ["ication", "ation", "tion", "ion", "ing", "ed", "es", "s"] {
+            if stem.len() > suffix.len() + 3 && stem.ends_with(suffix) {
+                stem.truncate(stem.len() - suffix.len());
+                break;
+            }
+        }
+        // Also split snake_case and check each token's stem
+        stem
+    }
+
+    fn stem_contains(name_lower: &str, term: &str) -> bool {
+        if term.len() < 5 || name_lower.len() < 5 {
+            return false;
+        }
+        let term_stem = Self::stem_of(term);
+        if term_stem.len() < 4 {
+            return false;
+        }
+        if name_lower.contains(&term_stem) {
+            return true;
+        }
+        // Token-wise: authenticate_user -> [authenticate, user], authentication -> authenticat
+        for tok in name_lower.split('_') {
+            if tok.contains(&term_stem) || term.contains(tok) && tok.len() >= 4 {
+                return true;
+            }
+            let tok_stem = Self::stem_of(tok);
+            if tok_stem.len() >= 4
+                && (term_stem.starts_with(&tok_stem) || tok_stem.starts_with(&term_stem))
+            {
+                // Require meaningful overlap (>=6 chars or 70% of shorter)
+                let overlap = term_stem
+                    .chars()
+                    .zip(tok_stem.chars())
+                    .take_while(|(a, b)| a == b)
+                    .count();
+                if overlap >= 6 || overlap * 10 >= term_stem.len() * 7.min(tok_stem.len()) {
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
+    /// Fuzzy string matching with max edit distance (char-based, UTF-8 safe)
+    fn fuzzy_match(&self, text: &str, pattern: &str, max_distance: usize) -> bool {
+        if pattern.chars().count() < 3 || !text.is_ascii() || !pattern.is_ascii() {
+            // Fall back to simple contains for non-ASCII to avoid byte slicing issues
+            if !text.is_ascii() || !pattern.is_ascii() {
+                return false;
+            }
+            if pattern.len() < 3 {
+                return false;
+            }
+        }
+
+        // Simple sliding window fuzzy match
+        let text_bytes = text.as_bytes();
+        let pattern_bytes = pattern.as_bytes();
+
+        if text_bytes.len() < pattern_bytes.len() {
+            return false;
+        }
+
+        for i in 0..=text_bytes.len() - pattern_bytes.len() {
+            let mut distance = 0;
+            for j in 0..pattern_bytes.len() {
+                if text_bytes[i + j] != pattern_bytes[j] {
+                    distance += 1;
+                    if distance > max_distance {
+                        break;
+                    }
+                }
+            }
+            if distance <= max_distance {
+                return true;
+            }
+        }
+
+        false
+    }
+
+    /// Get context for a node — bounds-checked, never panics on stale locations
     fn get_node_context(&self, node: &CodeNode) -> String {
         if let Ok(content) = std::fs::read_to_string(&node.file_path) {
             let lines: Vec<&str> = content.lines().collect();
-            let start = node.location.start_line.saturating_sub(3);
+            if lines.is_empty() {
+                return String::new();
+            }
+            let start = node.location.start_line.saturating_sub(3).min(lines.len());
             let end = (node.location.end_line + 3).min(lines.len());
+            if start >= end || start >= lines.len() {
+                return String::new();
+            }
 
             lines[start..end].join("\n")
         } else {
@@ -796,34 +1309,48 @@ impl CodeBrain {
             .get(&node_id)
             .ok_or_else(|| NeuraCodeError::NotFound(format!("Node {} not found", node_id)))?;
 
+        // Build reverse adjacency once: target -> sources (O(E))
+        let mut rev_adj: HashMap<Uuid, Vec<Uuid>> = HashMap::new();
+        for e in &graph.edges {
+            rev_adj.entry(e.target).or_default().push(e.source);
+        }
         // Find direct dependents
-        let direct_dependents: Vec<CodeNode> = graph
-            .edges
-            .iter()
-            .filter(|e| e.target == node_id)
-            .filter_map(|e| graph.nodes.get(&e.source))
-            .cloned()
-            .collect();
+        let direct_dependents: Vec<CodeNode> = rev_adj
+            .get(&node_id)
+            .map(|srcs| {
+                srcs.iter()
+                    .filter_map(|s| graph.nodes.get(s))
+                    .cloned()
+                    .collect()
+            })
+            .unwrap_or_default();
 
-        // Find transitive dependents (BFS)
+        // Find transitive dependents (BFS over adjacency)
         let mut transitive_dependents = Vec::new();
         let mut visited = HashSet::new();
         let mut queue: Vec<Uuid> = direct_dependents.iter().map(|n| n.id).collect();
 
         while let Some(current) = queue.pop() {
-            if visited.contains(&current) {
+            if !visited.insert(current) {
                 continue;
             }
-            visited.insert(current);
 
-            for edge in &graph.edges {
-                if edge.target == current && !visited.contains(&edge.source) {
-                    if let Some(n) = graph.nodes.get(&edge.source) {
-                        transitive_dependents.push(n.clone());
-                        queue.push(edge.source);
+            if let Some(sources) = rev_adj.get(&current) {
+                for src in sources {
+                    if !visited.contains(src) {
+                        if let Some(n) = graph.nodes.get(src) {
+                            transitive_dependents.push(n.clone());
+                            queue.push(*src);
+                        }
                     }
                 }
             }
+        }
+
+        // Find affected tests — index test edges once
+        let mut test_sources: HashMap<Uuid, Vec<Uuid>> = HashMap::new();
+        for e in &graph.edges {
+            test_sources.entry(e.source).or_default().push(e.target);
         }
 
         // Find affected tests
@@ -832,9 +1359,10 @@ impl CodeBrain {
             .values()
             .filter(|n| n.metadata.is_test)
             .filter(|n| {
-                graph.edges.iter().any(|e| {
-                    e.source == n.id && (e.target == node_id || visited.contains(&e.target))
-                })
+                test_sources
+                    .get(&n.id)
+                    .map(|tgts| tgts.iter().any(|t| *t == node_id || visited.contains(t)))
+                    .unwrap_or(false)
             })
             .cloned()
             .collect();
@@ -881,37 +1409,143 @@ impl CodeBrain {
         let graph = self.graph.read();
         let mut hotspots = Vec::new();
 
-        // Calculate centrality (simple degree centrality)
-        let mut degree: HashMap<Uuid, usize> = HashMap::new();
+        // Calculate multiple centrality metrics
+        let mut in_degree: HashMap<Uuid, usize> = HashMap::new();
+        let mut out_degree: HashMap<Uuid, usize> = HashMap::new();
+        let mut total_degree: HashMap<Uuid, usize> = HashMap::new();
+
         for edge in &graph.edges {
-            *degree.entry(edge.target).or_default() += 1;
-            *degree.entry(edge.source).or_default() += 1;
+            *in_degree.entry(edge.target).or_default() += 1;
+            *out_degree.entry(edge.source).or_default() += 1;
+            *total_degree.entry(edge.target).or_default() += 1;
+            *total_degree.entry(edge.source).or_default() += 1;
+        }
+
+        // Calculate PageRank-like score (sparse adjacency, O(E) per iteration)
+        let damping_factor = 0.85;
+        let node_count = graph.nodes.len() as f32;
+        // Scale iterations with graph size to bound cost
+        let iterations = if node_count > 2000.0 { 5 } else { 10 };
+
+        let mut pagerank: HashMap<Uuid, f32> = graph
+            .nodes
+            .keys()
+            .map(|id| (*id, 1.0 / node_count.max(1.0)))
+            .collect();
+        // Pre-build incoming adjacency once
+        let mut incoming: HashMap<Uuid, Vec<Uuid>> = HashMap::new();
+        for edge in &graph.edges {
+            incoming.entry(edge.target).or_default().push(edge.source);
+        }
+
+        for _ in 0..iterations {
+            let mut new_pagerank: HashMap<Uuid, f32> = HashMap::with_capacity(graph.nodes.len());
+
+            for id in graph.nodes.keys() {
+                let mut rank = (1.0 - damping_factor) / node_count.max(1.0);
+
+                // Sum contributions from incoming edges (sparse)
+                if let Some(sources) = incoming.get(id) {
+                    for src in sources {
+                        let out_deg = out_degree.get(src).copied().unwrap_or(1).max(1);
+                        rank += damping_factor * pagerank.get(src).unwrap_or(&0.0) / out_deg as f32;
+                    }
+                }
+
+                new_pagerank.insert(*id, rank);
+            }
+
+            pagerank = new_pagerank;
         }
 
         // Find high-centrality nodes
         for (id, node) in &graph.nodes {
-            let node_degree = degree.get(id).copied().unwrap_or(0);
-            if node_degree > 5 {
-                let mut reasons = Vec::new();
-                reasons.push(format!("High connectivity: {} connections", node_degree));
+            let in_deg = in_degree.get(id).copied().unwrap_or(0);
+            let out_deg = out_degree.get(id).copied().unwrap_or(0);
+            let total_deg = total_degree.get(id).copied().unwrap_or(0);
+            let pr = pagerank.get(id).copied().unwrap_or(0.0);
 
-                if let Some(complexity) = node.metadata.complexity {
-                    if complexity > 10 {
-                        reasons.push(format!("High complexity: {}", complexity));
-                    }
+            // Calculate composite score
+            let mut score = 0.0;
+            let mut reasons = Vec::new();
+
+            // Degree centrality
+            if total_deg > 5 {
+                score += total_deg as f32 * 2.0;
+                reasons.push(format!("High connectivity: {} connections", total_deg));
+            }
+
+            // In-degree centrality (many dependencies)
+            if in_deg > 3 {
+                score += in_deg as f32 * 3.0;
+                reasons.push(format!("High fan-in: {} dependencies", in_deg));
+            }
+
+            // Out-degree centrality (depends on many)
+            if out_deg > 3 {
+                score += out_deg as f32 * 1.5;
+                reasons.push(format!("High fan-out: {} dependencies", out_deg));
+            }
+
+            // PageRank score
+            if pr > 0.01 {
+                score += pr * 100.0;
+                reasons.push(format!("High importance: PageRank {:.4}", pr));
+            }
+
+            // Complexity factor
+            if let Some(complexity) = node.metadata.complexity {
+                if complexity > 10 {
+                    score += complexity as f32 * 2.0;
+                    reasons.push(format!("High complexity: {}", complexity));
+                } else if complexity > 5 {
+                    score += complexity as f32;
+                    reasons.push(format!("Medium complexity: {}", complexity));
                 }
+            }
 
+            // Lines of code factor
+            if let Some(loc) = node.metadata.lines_of_code {
+                if loc > 100 {
+                    score += loc as f32 * 0.1;
+                    reasons.push(format!("Large size: {} lines", loc));
+                }
+            }
+
+            // Kind-based adjustments
+            match node.kind {
+                NodeKind::Function | NodeKind::Method => {
+                    score *= 1.2;
+                }
+                NodeKind::Class | NodeKind::Struct => {
+                    score *= 1.1;
+                }
+                _ => {}
+            }
+
+            if score > 5.0 {
                 hotspots.push(Hotspot {
                     node: node.clone(),
-                    score: node_degree as f32,
+                    score,
                     reasons,
                 });
             }
         }
 
-        hotspots.sort_by(|a, b| b.score.partial_cmp(&a.score).unwrap());
+        // Sort by score (descending)
+        hotspots.sort_by(|a, b| {
+            b.score
+                .partial_cmp(&a.score)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
         hotspots.truncate(10);
         hotspots
+    }
+
+    /// Graph counts (nodes, edges) — for stats/MCP without cloning graph
+    pub fn counts(&self) -> (usize, usize) {
+        let g = self.graph.read();
+        (g.nodes.len(), g.edges.len())
     }
 
     /// Detect architecture pattern

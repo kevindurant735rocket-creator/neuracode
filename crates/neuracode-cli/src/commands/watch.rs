@@ -7,7 +7,7 @@ use neuracode_core::{NeuraCode, NeuraCodeConfig};
 use std::path::Path;
 use std::time::Duration;
 
-pub async fn execute(path: String) -> Result<()> {
+pub async fn execute(config_path: Option<String>, path: String) -> Result<()> {
     let project_path = Path::new(&path);
 
     if !project_path.exists() {
@@ -19,7 +19,7 @@ pub async fn execute(path: String) -> Result<()> {
     println!("Press Ctrl+C to stop");
     println!();
 
-    let config = NeuraCodeConfig::default();
+    let config = NeuraCodeConfig::load_or_default(config_path);
     let neuracode = NeuraCode::new(config).await?;
 
     // Initial index

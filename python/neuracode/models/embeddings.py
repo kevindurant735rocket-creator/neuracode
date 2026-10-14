@@ -18,17 +18,19 @@ class EmbeddingModel:
         self.model_name = model_name
         self._model = None
         self._tokenizer = None
+        self.is_fallback = False
     
     def _load_model(self):
         """Lazy load the model"""
-        if self._model is None:
+        if self._model is None and not self.is_fallback:
             try:
                 from transformers import AutoTokenizer, AutoModel
                 self._tokenizer = AutoTokenizer.from_pretrained(self.model_name)
                 self._model = AutoModel.from_pretrained(self.model_name)
             except Exception as e:
-                print(f"Warning: Could not load model {self.model_name}: {e}")
-                print("Falling back to simple embeddings")
+                import warnings
+                warnings.warn(f"EmbeddingModel falling back to hashing embed (no torch/transformers): {e}")
+                self.is_fallback = True
     
     def embed(self, texts: List[str]) -> np.ndarray:
         """Generate embeddings for a list of texts
@@ -66,29 +68,19 @@ class EmbeddingModel:
         return np.array(embeddings)
     
     def _simple_embed(self, texts: List[str]) -> np.ndarray:
-        """Simple bag-of-words embedding as fallback"""
-        # Create a simple vocabulary
-        vocab = {}
-        for text in texts:
-            for word in text.lower().split():
-                if word not in vocab:
-                    vocab[word] = len(vocab)
-        
-        # Create embeddings
+        """Hashing-based fallback with fixed dim — stable across calls (no vocab mismatch)."""
+        import hashlib
+        dim = 384
         embeddings = []
         for text in texts:
-            embedding = np.zeros(len(vocab))
+            vec = np.zeros(dim, dtype=np.float64)
             for word in text.lower().split():
-                if word in vocab:
-                    embedding[vocab[word]] += 1
-            
-            # Normalize
-            norm = np.linalg.norm(embedding)
+                h = int(hashlib.md5(word.encode()).hexdigest(), 16) % dim
+                vec[h] += 1.0
+            norm = np.linalg.norm(vec)
             if norm > 0:
-                embedding = embedding / norm
-            
-            embeddings.append(embedding)
-        
+                vec = vec / norm
+            embeddings.append(vec)
         return np.array(embeddings)
     
     def similarity(self, emb1: np.ndarray, emb2: np.ndarray) -> float:

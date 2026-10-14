@@ -4,9 +4,9 @@ use anyhow::Result;
 use colored::Colorize;
 use neuracode_core::{NeuraCode, NeuraCodeConfig};
 
-pub async fn execute(target: String, format: String) -> Result<()> {
+pub async fn execute(config_path: Option<String>, target: String, format: String) -> Result<()> {
     // Create configuration
-    let config = NeuraCodeConfig::default();
+    let config = NeuraCodeConfig::load_or_default(config_path);
 
     // Create NeuraCode instance
     let neuracode = NeuraCode::new(config).await?;

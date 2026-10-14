@@ -242,22 +242,37 @@ impl MultiAgentSupport {
         // Install MCP server configuration
         match self.install_mcp_server(config).await {
             Ok(_) => {
-                // Install instructions
+                // Install instructions (non-fatal)
+                let mut warnings = Vec::new();
                 if let Some(ref instructions_path) = config.instructions_path {
-                    let _ = self
+                    if let Err(e) = self
                         .install_instructions(instructions_path, agent_type)
-                        .await;
+                        .await
+                    {
+                        warnings.push(format!("instructions: {}", e));
+                    }
                 }
 
-                // Install skills
+                // Install skills (non-fatal)
                 if let Some(ref skills_path) = config.skills_path {
-                    let _ = self.install_skills(skills_path).await;
+                    if let Err(e) = self.install_skills(skills_path).await {
+                        warnings.push(format!("skills: {}", e));
+                    }
                 }
 
+                let msg = if warnings.is_empty() {
+                    format!("Successfully installed for {}", agent_type.name())
+                } else {
+                    format!(
+                        "Installed for {} with warnings: {}",
+                        agent_type.name(),
+                        warnings.join("; ")
+                    )
+                };
                 AgentInstallResult {
                     agent: agent_type,
                     success: true,
-                    message: format!("Successfully installed for {}", agent_type.name()),
+                    message: msg,
                 }
             }
             Err(e) => AgentInstallResult {
@@ -311,19 +326,45 @@ impl MultiAgentSupport {
         )
     }
 
-    /// Merge configurations
+    /// Merge configurations — preserves existing user config, only adds/updates neuracode key
     fn merge_config(&self, existing: &str, new: &str) -> Result<String> {
-        // Simple JSON merge (in production, use a proper JSON library)
-        if existing == "{}" {
-            Ok(new.to_string())
-        } else {
-            // For now, just return the new config
-            // In production, this would properly merge JSON
-            Ok(new.to_string())
+        let mut existing_v: serde_json::Value =
+            serde_json::from_str(existing).unwrap_or(serde_json::Value::Object(Default::default()));
+        let new_v: serde_json::Value =
+            serde_json::from_str(new).unwrap_or(serde_json::Value::Object(Default::default()));
+        // Ensure objects
+        if !existing_v.is_object() {
+            existing_v = serde_json::Value::Object(Default::default());
         }
+        let obj = existing_v.as_object_mut().unwrap();
+        // Merge top-level "mcpServers" map instead of overwriting whole file
+        if let Some(new_servers) = new_v.get("mcpServers").and_then(|v| v.as_object()) {
+            let entry = obj
+                .entry("mcpServers".to_string())
+                .or_insert_with(|| serde_json::Value::Object(Default::default()));
+            if let Some(map) = entry.as_object_mut() {
+                for (k, v) in new_servers {
+                    map.insert(k.clone(), v.clone());
+                }
+            } else {
+                obj.insert(
+                    "mcpServers".to_string(),
+                    serde_json::Value::Object(new_servers.clone()),
+                );
+            }
+        }
+        // Also merge any other top-level keys from new that are missing
+        if let Some(new_obj) = new_v.as_object() {
+            for (k, v) in new_obj {
+                if k != "mcpServers" && !obj.contains_key(k) {
+                    obj.insert(k.clone(), v.clone());
+                }
+            }
+        }
+        Ok(serde_json::to_string_pretty(&existing_v)?)
     }
 
-    /// Install instructions
+    /// Install instructions — appends NeuraCode section, never overwrites user content
     async fn install_instructions(
         &self,
         instructions_path: &PathBuf,
@@ -338,7 +379,17 @@ impl MultiAgentSupport {
             .ok_or_else(|| NeuraCodeError::Config("Invalid instructions path".to_string()))?;
 
         std::fs::create_dir_all(instructions_dir)?;
-        std::fs::write(instructions_path, instructions)?;
+        if instructions_path.exists() {
+            let existing = std::fs::read_to_string(instructions_path)?;
+            if existing.contains("NeuraCode Integration") {
+                // Already installed — idempotent, do nothing
+                return Ok(());
+            }
+            let merged = format!("{}\n\n{}", existing.trim_end(), instructions);
+            std::fs::write(instructions_path, merged)?;
+        } else {
+            std::fs::write(instructions_path, instructions)?;
+        }
 
         Ok(())
     }
@@ -450,15 +501,50 @@ Use this skill when:
             }
         };
 
-        // Remove MCP server configuration
+        // Remove MCP server configuration — only remove neuracode key, keep user config
         if config.config_path.exists() {
-            let _ = std::fs::remove_file(&config.config_path);
+            if let Ok(content) = std::fs::read_to_string(&config.config_path) {
+                if let Ok(mut v) = serde_json::from_str::<serde_json::Value>(&content) {
+                    let mut changed = false;
+                    if let Some(map) = v.get_mut("mcpServers").and_then(|s| s.as_object_mut()) {
+                        if map.remove(&config.mcp_server_name).is_some() {
+                            changed = true;
+                        }
+                    }
+                    // Also support flat "servers" layout used by some agents
+                    if let Some(map) = v.get_mut("servers").and_then(|s| s.as_object_mut()) {
+                        if map.remove(&config.mcp_server_name).is_some() {
+                            changed = true;
+                        }
+                    }
+                    if changed {
+                        let _ = std::fs::write(
+                            &config.config_path,
+                            serde_json::to_string_pretty(&v).unwrap_or(content),
+                        );
+                    }
+                }
+            }
         }
 
-        // Remove instructions
+        // Remove instructions — only strip our section, keep user content
         if let Some(ref instructions_path) = config.instructions_path {
             if instructions_path.exists() {
-                let _ = std::fs::remove_file(instructions_path);
+                if let Ok(content) = std::fs::read_to_string(instructions_path) {
+                    if content.contains("NeuraCode Integration") {
+                        // Remove from marker to end if it's our appended block at end,
+                        // else remove exact generated block.
+                        let marker = "# NeuraCode Integration";
+                        if let Some(pos) = content.find(marker) {
+                            let before = content[..pos].trim_end().to_string();
+                            if before.is_empty() {
+                                let _ = std::fs::remove_file(instructions_path);
+                            } else {
+                                let _ = std::fs::write(instructions_path, before + "\n");
+                            }
+                        }
+                    }
+                }
             }
         }
 

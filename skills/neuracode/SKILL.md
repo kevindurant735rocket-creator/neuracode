@@ -1,3 +1,9 @@
+---
+name: neuracode
+description: Local-first code intelligence (index, lexical search, impact analysis, task-context prediction) for the current repository. Use when searching code, assessing change impact, or planning refactors.
+version: 0.1.0
+---
+
 # NeuraCode Skill
 
 ## Description
@@ -21,7 +27,8 @@ Use this skill when:
 /neuracode search <query>
 ```
 
-Semantic search across your entire codebase.
+Lexical code search across your indexed repository (keyword + stem + fuzzy;
+see docs/retrieval.md — no vector index in v0.1.x).
 
 **Examples:**
 - `/neuracode search authentication`

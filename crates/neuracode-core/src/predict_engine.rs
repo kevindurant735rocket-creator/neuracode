@@ -16,11 +16,14 @@ pub struct PredictEngine {
     /// Configuration
     config: NeuraCodeConfig,
 
-    /// Task patterns learned from history
+    /// Task patterns learned from history (bounded)
     task_patterns: HashMap<String, TaskType>,
 
-    /// Context cache
-    context_cache: HashMap<TaskType, ContextPackage>,
+    /// Context cache (interior mutability so predict(&self) can populate)
+    context_cache: parking_lot::RwLock<HashMap<TaskType, ContextPackage>>,
+
+    /// Ordered classification rules: (pattern, type, weight) — deterministic
+    rules: Vec<(String, TaskType, u32)>,
 }
 
 impl PredictEngine {
@@ -30,11 +33,13 @@ impl PredictEngine {
 
         // Initialize with common patterns
         Self::init_task_patterns(&mut task_patterns);
+        let rules = Self::build_rules();
 
         Self {
             config: config.clone(),
             task_patterns,
-            context_cache: HashMap::new(),
+            context_cache: parking_lot::RwLock::new(HashMap::new()),
+            rules,
         }
     }
 
@@ -98,6 +103,51 @@ impl PredictEngine {
         patterns.insert("pattern".to_string(), TaskType::Architecture);
     }
 
+    /// Ordered deterministic rules with weights (higher = more specific)
+    fn build_rules() -> Vec<(String, TaskType, u32)> {
+        vec![
+            ("vulnerability".into(), TaskType::SecurityFix, 10),
+            ("injection".into(), TaskType::SecurityFix, 10),
+            ("xss".into(), TaskType::SecurityFix, 10),
+            ("performance".into(), TaskType::PerformanceOptimization, 9),
+            ("optimize".into(), TaskType::PerformanceOptimization, 9),
+            ("architecture".into(), TaskType::Architecture, 9),
+            ("refactor".into(), TaskType::Refactor, 8),
+            ("restructure".into(), TaskType::Refactor, 8),
+            ("coverage".into(), TaskType::Testing, 8),
+            ("document".into(), TaskType::Documentation, 7),
+            ("readme".into(), TaskType::Documentation, 7),
+            ("review".into(), TaskType::CodeReview, 7),
+            ("audit".into(), TaskType::CodeReview, 7),
+            ("crash".into(), TaskType::BugFix, 6),
+            ("broken".into(), TaskType::BugFix, 6),
+            ("error".into(), TaskType::BugFix, 5),
+            ("bug".into(), TaskType::BugFix, 5),
+            ("fix".into(), TaskType::BugFix, 4),
+            ("issue".into(), TaskType::BugFix, 4),
+            ("problem".into(), TaskType::BugFix, 4),
+            ("security".into(), TaskType::SecurityFix, 4),
+            ("auth".into(), TaskType::SecurityFix, 3),
+            ("test".into(), TaskType::Testing, 3),
+            ("spec".into(), TaskType::Testing, 3),
+            ("design".into(), TaskType::Architecture, 3),
+            ("pattern".into(), TaskType::Architecture, 3),
+            ("clean".into(), TaskType::Refactor, 2),
+            ("simplify".into(), TaskType::Refactor, 2),
+            ("slow".into(), TaskType::PerformanceOptimization, 2),
+            ("speed".into(), TaskType::PerformanceOptimization, 2),
+            ("cache".into(), TaskType::PerformanceOptimization, 2),
+            ("feature".into(), TaskType::NewFeature, 2),
+            ("implement".into(), TaskType::NewFeature, 2),
+            ("create".into(), TaskType::NewFeature, 1),
+            ("add".into(), TaskType::NewFeature, 1),
+            ("new".into(), TaskType::NewFeature, 1),
+            ("check".into(), TaskType::CodeReview, 1),
+            ("docs".into(), TaskType::Documentation, 1),
+            ("comment".into(), TaskType::Documentation, 1),
+        ]
+    }
+
     /// Predict context for a task
     #[instrument(skip(self))]
     pub async fn predict(&self, task: &str) -> Result<ContextPackage> {
@@ -108,30 +158,41 @@ impl PredictEngine {
         debug!("Classified as: {:?}", task_type);
 
         // Check cache
-        if let Some(cached) = self.context_cache.get(&task_type) {
+        if let Some(cached) = self.context_cache.read().get(&task_type).cloned() {
             debug!("Using cached context");
-            return Ok(cached.clone());
+            return Ok(cached);
         }
 
         // Build context package
         let context = self.build_context(task_type).await?;
 
+        // Populate cache (bounded to 10 task types — naturally bounded)
+        self.context_cache
+            .write()
+            .insert(task_type, context.clone());
+
         Ok(context)
     }
 
-    /// Classify a task
+    /// Classify a task — deterministic weighted match, no HashMap iteration randomness
     pub fn classify_task(&self, task: &str) -> TaskType {
         let task_lower = task.to_lowercase();
 
-        // Check for exact matches first
-        for (pattern, task_type) in &self.task_patterns {
-            if task_lower.contains(pattern) {
-                return *task_type;
+        // Exact learned-phrase match first (bounded map)
+        if let Some(t) = self.task_patterns.get(&task_lower) {
+            return *t;
+        }
+        let mut best: Option<(u32, usize, TaskType)> = None;
+        for (idx, (pat, ty, w)) in self.rules.iter().enumerate() {
+            if task_lower.contains(pat.as_str()) {
+                let score = *w * 1000 + (100 - pat.len() as u32);
+                match best {
+                    Some((bs, _, _)) if bs >= score => {}
+                    _ => best = Some((score, idx, *ty)),
+                }
             }
         }
-
-        // Default to general
-        TaskType::General
+        best.map(|(_, _, t)| t).unwrap_or(TaskType::General)
     }
 
     /// Build context package for a task type
@@ -234,75 +295,446 @@ impl PredictEngine {
     }
 
     /// Get recent commits
-    async fn get_recent_commits(&self, _limit: usize) -> Vec<CommitInfo> {
-        // In production, this would use git2 or similar
-        // For now, return empty
-        Vec::new()
+    async fn get_recent_commits(&self, limit: usize) -> Vec<CommitInfo> {
+        // Try to get commits from git
+        let output = std::process::Command::new("git")
+            .args([
+                "log",
+                "--oneline",
+                "-n",
+                &limit.to_string(),
+                "--pretty=format:%H|%s|%an|%ad",
+                "--date=short",
+            ])
+            .output();
+
+        match output {
+            Ok(output) if output.status.success() => {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                stdout
+                    .lines()
+                    .filter_map(|line| {
+                        let parts: Vec<&str> = line.splitn(4, '|').collect();
+                        if parts.len() == 4 {
+                            // Parse date string to DateTime
+                            let date = chrono::NaiveDate::parse_from_str(parts[3], "%Y-%m-%d")
+                                .ok()
+                                .map(|d| {
+                                    chrono::DateTime::from_naive_utc_and_offset(
+                                        d.and_hms_opt(0, 0, 0).unwrap(),
+                                        chrono::Utc,
+                                    )
+                                })
+                                .unwrap_or_else(chrono::Utc::now);
+
+                            Some(CommitInfo {
+                                hash: parts[0].to_string(),
+                                message: parts[1].to_string(),
+                                author: parts[2].to_string(),
+                                timestamp: date,
+                                files_changed: Vec::new(),
+                            })
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
+            }
+            _ => Vec::new(),
+        }
     }
 
     /// Get error logs
     async fn get_error_logs(&self) -> Vec<String> {
-        // In production, this would read from log files
-        Vec::new()
+        // Search for common log files
+        let log_paths = [
+            "logs/error.log",
+            "log/error.log",
+            "logs/app.log",
+            "tmp/error.log",
+        ];
+
+        let mut logs = Vec::new();
+        for path in &log_paths {
+            if let Ok(content) = std::fs::read_to_string(path) {
+                // Get last 50 lines
+                let lines: Vec<&str> = content.lines().collect();
+                let start = lines.len().saturating_sub(50);
+                logs.extend(lines[start..].iter().map(|s| s.to_string()));
+            }
+        }
+
+        logs
     }
 
     /// Find test files
     async fn find_test_files(&self) -> Vec<PathBuf> {
-        // In production, this would search for test files
-        Vec::new()
+        let mut test_files = Vec::new();
+
+        // Common test file patterns
+        let test_patterns = [
+            "test",
+            "tests",
+            "spec",
+            "specs",
+            "__tests__",
+            "_test",
+            "_spec",
+        ];
+
+        // Walk the directory
+        if let Ok(entries) = std::fs::read_dir(".") {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let name = path
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("")
+                    .to_lowercase();
+
+                if test_patterns.iter().any(|p| name.contains(p)) {
+                    if path.is_dir() {
+                        // Recursively find test files
+                        self.collect_test_files(&path, &mut test_files);
+                    } else if path.is_file() {
+                        test_files.push(path);
+                    }
+                }
+            }
+        }
+
+        test_files
+    }
+
+    /// Recursively collect test files
+    fn collect_test_files(&self, dir: &std::path::Path, files: &mut Vec<PathBuf>) {
+        if let Ok(entries) = std::fs::read_dir(dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_dir() {
+                    self.collect_test_files(&path, files);
+                } else if path.is_file() {
+                    let name = path
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("")
+                        .to_lowercase();
+                    if name.contains("test") || name.contains("spec") {
+                        files.push(path);
+                    }
+                }
+            }
+        }
     }
 
     /// Find similar fixes
     async fn find_similar_fixes(&self) -> Vec<FixInfo> {
-        // In production, this would search git history
-        Vec::new()
+        // Search git history for similar fixes
+        let output = std::process::Command::new("git")
+            .args([
+                "log",
+                "--all",
+                "--grep=fix",
+                "--oneline",
+                "-n",
+                "20",
+                "--pretty=format:%H|%s",
+            ])
+            .output();
+
+        match output {
+            Ok(output) if output.status.success() => {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                stdout
+                    .lines()
+                    .filter_map(|line| {
+                        let parts: Vec<&str> = line.splitn(2, '|').collect();
+                        if parts.len() == 2 {
+                            Some(FixInfo {
+                                commit_hash: parts[0].to_string(),
+                                description: parts[1].to_string(),
+                                files_changed: Vec::new(),
+                                diff: String::new(),
+                            })
+                        } else {
+                            None
+                        }
+                    })
+                    .collect()
+            }
+            _ => Vec::new(),
+        }
     }
 
-    /// Get architecture info
+    /// Get architecture info — scans repo root (cwd), returns layers actually found
     async fn get_architecture_info(&self) -> Option<ArchitectureInfo> {
-        // In production, this would analyze the codebase
-        None
+        // Analyze directory structure to detect architecture
+        let mut has_src = false;
+        let mut has_lib = false;
+        let mut has_tests = false;
+        let mut has_bins = false;
+
+        let root = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+        if let Ok(entries) = std::fs::read_dir(&root) {
+            for entry in entries.flatten() {
+                let name = entry.file_name().to_string_lossy().to_lowercase();
+                if name == "src" {
+                    has_src = true;
+                }
+                if name == "lib" {
+                    has_lib = true;
+                }
+                if name == "test" || name == "tests" {
+                    has_tests = true;
+                }
+                if name == "crates" || name == "bin" {
+                    has_bins = true;
+                }
+            }
+        }
+
+        let pattern = if has_src && has_lib {
+            "Library Architecture"
+        } else if has_src && has_tests {
+            "Application Architecture"
+        } else if has_src || has_bins {
+            "Simple Architecture"
+        } else {
+            "Unknown Architecture"
+        };
+
+        Some(ArchitectureInfo {
+            pattern: pattern.to_string(),
+            layers: vec![],
+            components: vec![],
+            data_flow: vec![],
+        })
     }
 
     /// Get dependency info
     async fn get_dependency_info(&self) -> Vec<DependencyInfo> {
-        // In production, this would parse package files
-        Vec::new()
+        let mut deps = Vec::new();
+
+        // Check for package.json
+        if let Ok(content) = std::fs::read_to_string("package.json") {
+            if let Ok(json) = serde_json::from_str::<serde_json::Value>(&content) {
+                if let Some(dependencies) = json.get("dependencies").and_then(|d| d.as_object()) {
+                    for (name, version) in dependencies {
+                        deps.push(DependencyInfo {
+                            name: name.clone(),
+                            version: version.as_str().unwrap_or("").to_string(),
+                            kind: DependencyKind::Runtime,
+                            is_direct: true,
+                        });
+                    }
+                }
+                if let Some(dev_dependencies) =
+                    json.get("devDependencies").and_then(|d| d.as_object())
+                {
+                    for (name, version) in dev_dependencies {
+                        deps.push(DependencyInfo {
+                            name: name.clone(),
+                            version: version.as_str().unwrap_or("").to_string(),
+                            kind: DependencyKind::Development,
+                            is_direct: true,
+                        });
+                    }
+                }
+            }
+        }
+
+        // Check for Cargo.toml (simple parsing)
+        if let Ok(content) = std::fs::read_to_string("Cargo.toml") {
+            let mut in_deps = false;
+            for line in content.lines() {
+                let line = line.trim();
+                if line.starts_with("[dependencies]") {
+                    in_deps = true;
+                    continue;
+                }
+                if line.starts_with("[") {
+                    in_deps = false;
+                    continue;
+                }
+                if in_deps && !line.is_empty() && !line.starts_with('#') {
+                    let name = line.split('=').next().unwrap_or("").trim().to_string();
+                    if !name.is_empty() {
+                        deps.push(DependencyInfo {
+                            name,
+                            version: "unknown".to_string(),
+                            kind: DependencyKind::Runtime,
+                            is_direct: true,
+                        });
+                    }
+                }
+            }
+        }
+
+        // Check for requirements.txt
+        if let Ok(content) = std::fs::read_to_string("requirements.txt") {
+            for line in content.lines() {
+                let line = line.trim();
+                if !line.is_empty() && !line.starts_with('#') {
+                    let parts: Vec<&str> = line.split("==").collect();
+                    if parts.len() == 2 {
+                        deps.push(DependencyInfo {
+                            name: parts[0].to_string(),
+                            version: parts[1].to_string(),
+                            kind: DependencyKind::Runtime,
+                            is_direct: true,
+                        });
+                    }
+                }
+            }
+        }
+
+        deps
     }
 
     /// Find similar features
     async fn find_similar_features(&self) -> Vec<PathBuf> {
-        Vec::new()
+        // Find files with similar names or content
+        let mut features = Vec::new();
+
+        if let Ok(entries) = std::fs::read_dir(".") {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file() {
+                    let name = path
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("")
+                        .to_lowercase();
+                    if name.contains("feature")
+                        || name.contains("service")
+                        || name.contains("module")
+                    {
+                        features.push(path);
+                    }
+                }
+            }
+        }
+
+        features
     }
 
     /// Find hot files
     async fn find_hot_files(&self) -> Vec<PathBuf> {
-        Vec::new()
+        // Find recently modified files
+        let mut files = Vec::new();
+
+        if let Ok(entries) = std::fs::read_dir(".") {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file() {
+                    if let Ok(metadata) = entry.metadata() {
+                        if let Ok(modified) = metadata.modified() {
+                            let age = std::time::SystemTime::now()
+                                .duration_since(modified)
+                                .unwrap_or_default()
+                                .as_secs();
+                            // Files modified in the last 7 days
+                            if age < 7 * 24 * 60 * 60 {
+                                files.push(path);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        files
     }
 
     /// Find security-related files
     async fn find_security_files(&self) -> Vec<PathBuf> {
-        Vec::new()
+        let mut files = Vec::new();
+
+        let security_patterns = ["auth", "security", "login", "password", "token", "crypto"];
+
+        if let Ok(entries) = std::fs::read_dir(".") {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file() {
+                    let name = path
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("")
+                        .to_lowercase();
+                    if security_patterns.iter().any(|p| name.contains(p)) {
+                        files.push(path);
+                    }
+                }
+            }
+        }
+
+        files
     }
 
     /// Find public APIs
     async fn find_public_apis(&self) -> Vec<PathBuf> {
-        Vec::new()
+        let mut files = Vec::new();
+
+        if let Ok(entries) = std::fs::read_dir(".") {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file() {
+                    let name = path
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("")
+                        .to_lowercase();
+                    if name.contains("api") || name.contains("public") || name.contains("export") {
+                        files.push(path);
+                    }
+                }
+            }
+        }
+
+        files
     }
 
     /// Find untested code
     async fn find_untested_code(&self) -> Vec<PathBuf> {
-        Vec::new()
+        let mut files = Vec::new();
+
+        // Find source files without corresponding test files
+        if let Ok(entries) = std::fs::read_dir("src") {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file() {
+                    let name = path
+                        .file_name()
+                        .and_then(|n| n.to_str())
+                        .unwrap_or("")
+                        .to_lowercase();
+                    if !name.contains("test") {
+                        files.push(path);
+                    }
+                }
+            }
+        }
+
+        files
     }
 
-    /// Learn from a task and its outcome
+    /// Learn from a task and its outcome (bounded to avoid unbounded growth)
     pub fn learn(&mut self, task: &str, task_type: TaskType, success: bool) {
-        let task_lower = task.to_lowercase();
-
-        if success {
-            // Reinforce the pattern
-            self.task_patterns.insert(task_lower, task_type);
+        if !success {
+            return;
         }
+        // Only memorize short canonical phrases, not full sentences
+        let key = task.to_lowercase().trim().to_string();
+        if key.len() > 64 || key.is_empty() {
+            return;
+        }
+        if self.task_patterns.len() >= 500 {
+            // Evict an arbitrary entry to stay bounded
+            if let Some(k) = self.task_patterns.keys().next().cloned() {
+                self.task_patterns.remove(&k);
+            }
+        }
+        self.task_patterns.insert(key, task_type);
     }
 
     /// Pre-fetch context for likely next tasks

@@ -1,14 +1,15 @@
 //! Cache module - High-performance caching for NeuraCode
 
 use dashmap::DashMap;
-use parking_lot::RwLock;
 use std::hash::Hash;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
 
-/// Cache entry with expiration
+/// Cache entry with expiration + LRU timestamp
 struct CacheEntry<V> {
     value: V,
     expires_at: Instant,
+    last_access: Instant,
 }
 
 /// LRU Cache with TTL support
@@ -16,8 +17,8 @@ pub struct Cache<K, V> {
     map: DashMap<K, CacheEntry<V>>,
     max_size: usize,
     ttl: Duration,
-    hits: RwLock<u64>,
-    misses: RwLock<u64>,
+    hits: AtomicU64,
+    misses: AtomicU64,
 }
 
 impl<K, V> Cache<K, V>
@@ -28,44 +29,54 @@ where
     /// Create a new cache
     pub fn new(max_size: usize, ttl_seconds: u64) -> Self {
         Self {
-            map: DashMap::with_capacity(max_size),
+            map: DashMap::with_capacity(max_size.max(1)),
             max_size,
             ttl: Duration::from_secs(ttl_seconds),
-            hits: RwLock::new(0),
-            misses: RwLock::new(0),
+            hits: AtomicU64::new(0),
+            misses: AtomicU64::new(0),
         }
     }
 
     /// Get a value from cache
     pub fn get(&self, key: &K) -> Option<V> {
-        if let Some(entry) = self.map.get(key) {
-            if entry.expires_at > Instant::now() {
-                // Cache hit
-                *self.hits.write() += 1;
+        let now = Instant::now();
+        if let Some(mut entry) = self.map.get_mut(key) {
+            if entry.expires_at > now {
+                // Cache hit — update LRU timestamp
+                self.hits.fetch_add(1, Ordering::Relaxed);
+                entry.last_access = now;
                 return Some(entry.value.clone());
             }
+            // Expired — remove to avoid zombie occupancy
+            drop(entry);
+            self.map.remove(key);
         }
 
         // Cache miss
-        *self.misses.write() += 1;
+        self.misses.fetch_add(1, Ordering::Relaxed);
         None
     }
 
     /// Insert a value into cache
     pub fn insert(&self, key: K, value: V) {
+        if self.max_size == 0 {
+            return;
+        }
         // Evict expired entries if at capacity
         if self.map.len() >= self.max_size {
             self.evict_expired();
         }
 
-        // If still at capacity, evict oldest
+        // If still at capacity, evict true LRU
         if self.map.len() >= self.max_size {
             self.evict_oldest();
         }
 
+        let now = Instant::now();
         let entry = CacheEntry {
             value,
-            expires_at: Instant::now() + self.ttl,
+            expires_at: now + self.ttl,
+            last_access: now,
         };
 
         self.map.insert(key, entry);
@@ -91,10 +102,10 @@ where
         self.map.is_empty()
     }
 
-    /// Get cache statistics
+    /// Get cache statistics (excludes expired entries from size)
     pub fn stats(&self) -> CacheStats {
-        let hits = *self.hits.read();
-        let misses = *self.misses.read();
+        let hits = self.hits.load(Ordering::Relaxed);
+        let misses = self.misses.load(Ordering::Relaxed);
         let total = hits + misses;
         let hit_rate = if total > 0 {
             hits as f64 / total as f64
@@ -117,9 +128,14 @@ where
         self.map.retain(|_, entry| entry.expires_at > now);
     }
 
-    /// Evict oldest entry (simple approach: remove first)
+    /// Evict oldest entry by last_access (true LRU)
     fn evict_oldest(&self) {
-        if let Some(key) = self.map.iter().next().map(|e| e.key().clone()) {
+        let oldest = self
+            .map
+            .iter()
+            .min_by_key(|e| e.value().last_access)
+            .map(|e| e.key().clone());
+        if let Some(key) = oldest {
             self.map.remove(&key);
         }
     }

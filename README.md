@@ -36,7 +36,7 @@ NeuraCode is a revolutionary cognitive enhancement system for AI coding agents. 
 
 ```bash
 # Install NeuraCode CLI
-curl -fsSL https://raw.githubusercontent.com/neuracode/neuracode/main/install.sh | bash
+curl -fsSL https://raw.githubusercontent.com/kevindurant735rocket-creator/neuracode/main/scripts/install.sh | bash
 
 # Or install via cargo
 cargo install neuracode-cli
@@ -134,7 +134,11 @@ Continuous learning from sessions:
 - ✅ Knowledge accumulation
 - ✅ Cross-session memory
 
-### 4. Multi-Modal (多模态理解)
+### 4. Multi-Modal (多模态理解) — 🚧 Experimental
+
+> Status: framework only. `neuracode understand` currently detects image type
+> from the file name and returns placeholder text; vision-model/OCR integration
+> is on the roadmap (see `docs/roadmap.md`).
 
 Understand visual content:
 
@@ -157,7 +161,11 @@ neuracode understand photos/whiteboard.jpg
 - Whiteboard photos
 - Screenshots
 
-### 5. Collaborative Reasoning (协作推理)
+### 5. Collaborative Reasoning (协作推理) — 🚧 Roadmap
+
+> Status: task-decomposition scaffolding exists; parallel execution and
+> knowledge fusion currently return mock results. Real multi-agent
+> orchestration is on the roadmap (see `docs/roadmap.md`).
 
 Multiple agents working together:
 
@@ -171,30 +179,33 @@ Multiple agents working together:
 
 Works with all major AI coding agents:
 
-| Agent | Status |
-|-------|--------|
-| Claude Code | ✅ Supported |
-| Cursor | ✅ Supported |
-| Codex | ✅ Supported |
-| Gemini CLI | ✅ Supported |
-| OpenCode | ✅ Supported |
-| GitHub Copilot | ✅ Supported |
-| Windsurf | ✅ Supported |
-| Cline | ✅ Supported |
-| Aider | ✅ Supported |
-| Continue | ✅ Supported |
+| Agent | Core config | Install script |
+|-------|-------------|----------------|
+| Claude Code | ✅ Supported | ✅ `skills/install/claude_code.sh` |
+| Cursor | ✅ Supported | ✅ `skills/install/cursor.sh` |
+| Codex | ✅ Supported | ✅ `skills/install/codex.sh` |
+| Gemini CLI | ✅ Supported | 🚧 Roadmap |
+| OpenCode | ✅ Supported | 🚧 Roadmap |
+| GitHub Copilot | ✅ Supported | 🚧 Roadmap |
+| Windsurf | ✅ Supported | 🚧 Roadmap |
+| Cline | ✅ Supported | 🚧 Roadmap |
+| Aider | ✅ Supported | 🚧 Roadmap |
+| Continue | ✅ Supported | 🚧 Roadmap |
 
 ---
 
 ## 📊 Performance
 
-| Metric | Value |
+> No benchmark numbers are claimed here. Measured figures live in
+> `docs/benchmarks.md` (run `cargo test -p neuracode-core` for the
+> regression suite; criterion benches under `crates/neuracode-core/benches/`).
+
+| Capability | Method |
 |--------|-------|
-| Index Speed | ~1ms per file |
-| Query Latency | < 10ms |
-| Language Support | 8+ (expanding) |
-| Agent Support | 10+ |
-| Prediction Accuracy | > 85% |
+| Indexing | tree-sitter parse + cached file scan (see `docs/benchmarks.md`) |
+| Search | keyword + stem + fuzzy recall, no vector index yet (see `docs/retrieval.md`) |
+| Language parsing | Rust/JS/TS/Python/Go/Java/C/C++ via tree-sitter; others file-level only |
+| Agent support | 10 core configs, 3 install scripts |
 
 ---
 
@@ -240,7 +251,7 @@ Works with all major AI coding agents:
 
 ```bash
 # Clone the repository
-git clone https://github.com/neuracode/neuracode.git
+git clone https://github.com/kevindurant735rocket-creator/neuracode.git
 cd neuracode
 
 # Build the project
@@ -276,6 +287,10 @@ neuracode/
 - [API Reference](docs/api.md)
 - [Usage Guide](docs/usage.md)
 - [Development](docs/development.md)
+- [Retrieval & Ranking](docs/retrieval.md)
+- [Benchmarks](docs/benchmarks.md)
+- [Roadmap](docs/roadmap.md)
+- [Privacy & Security](docs/privacy.md)
 
 ---
 
@@ -293,7 +308,7 @@ NeuraCode is licensed under the MIT License. See [LICENSE](LICENSE) for details.
 
 ## 🌟 Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=neuracode/neuracode&type=Date)](https://www.star-history.com/#neuracode/neuracode)
+[![Star History Chart](https://api.star-history.com/svg?repos=kevindurant735rocket-creator/neuracode&type=Date)](https://www.star-history.com/#kevindurant735rocket-creator/neuracode)
 
 ---
 
@@ -310,7 +325,7 @@ NeuraCode is licensed under the MIT License. See [LICENSE](LICENSE) for details.
 </p>
 
 <p align="center">
-  <a href="https://github.com/neuracode/neuracode">GitHub</a> •
+  <a href="https://github.com/kevindurant735rocket-creator/neuracode">GitHub</a> •
   <a href="https://discord.gg/neuracode">Discord</a> •
   <a href="https://twitter.com/neuracode">Twitter</a>
 </p>

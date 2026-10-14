@@ -5,7 +5,10 @@ use colored::Colorize;
 use neuracode_core::NeuraCodeConfig;
 
 pub async fn execute(full: bool) -> Result<()> {
-    let config = NeuraCodeConfig::default();
+    // Respect --config / .neuracode/config.toml instead of always default()
+    let config_path = std::env::var("NEURACODE_CONFIG").ok();
+    let config = NeuraCodeConfig::load_or_default(config_path);
+    let local_exists = std::path::Path::new(".neuracode/config.toml").exists();
 
     if full {
         println!("{}", "NeuraCode Configuration".bold());
@@ -28,6 +31,14 @@ pub async fn execute(full: bool) -> Result<()> {
         }
     } else {
         println!("NeuraCode Configuration");
+        println!(
+            "db: {} | prediction={} learning={} multimodal={} | local_config={}",
+            config.db_path.display(),
+            config.enable_prediction,
+            config.enable_learning,
+            config.enable_multimodal,
+            local_exists
+        );
         println!();
         println!("Use --full to see all settings");
     }

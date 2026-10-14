@@ -1,0 +1,26 @@
+# NeuraCode Configuration
+
+# Cache settings
+cache_size_mb = 512
+
+# Feature flags
+enable_prediction = true
+enable_learning = true
+enable_multimodal = true
+
+# Supported languages
+languages = ["rust", "javascript", "typescript", "python", "go", "java", "c", "cpp"]
+
+# Ignore patterns
+ignore_patterns = [
+    "node_modules",
+    ".git",
+    "target",
+    "dist",
+    "build",
+    "__pycache__",
+    ".venv",
+]
+
+# Maximum file size to index (in bytes)
+max_file_size = 1048576

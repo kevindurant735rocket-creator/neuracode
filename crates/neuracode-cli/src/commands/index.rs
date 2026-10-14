@@ -6,7 +6,7 @@ use neuracode_core::{NeuraCode, NeuraCodeConfig};
 use std::path::Path;
 use std::time::Instant;
 
-pub async fn execute(path: String, _force: bool) -> Result<()> {
+pub async fn execute(config_path: Option<String>, path: String, _force: bool) -> Result<()> {
     let project_path = Path::new(&path);
 
     if !project_path.exists() {
@@ -16,7 +16,7 @@ pub async fn execute(path: String, _force: bool) -> Result<()> {
     println!("Indexing codebase at: {}", project_path.display());
 
     // Create configuration
-    let config = NeuraCodeConfig::default();
+    let config = NeuraCodeConfig::load_or_default(config_path);
 
     // Create NeuraCode instance
     let neuracode = NeuraCode::new(config).await?;

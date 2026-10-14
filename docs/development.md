@@ -22,7 +22,7 @@
 ### Clone and Setup
 
 ```bash
-git clone https://github.com/neuracode/neuracode.git
+git clone https://github.com/kevindurant735rocket-creator/neuracode.git
 cd neuracode
 
 # Install Python dependencies

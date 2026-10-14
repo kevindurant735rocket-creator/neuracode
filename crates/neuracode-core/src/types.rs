@@ -220,6 +220,27 @@ impl NodeKind {
             Self::Package => "package",
         }
     }
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name.to_lowercase().as_str() {
+            "function" => Some(Self::Function),
+            "method" => Some(Self::Method),
+            "class" => Some(Self::Class),
+            "struct" => Some(Self::Struct),
+            "enum" => Some(Self::Enum),
+            "trait" => Some(Self::Trait),
+            "interface" => Some(Self::Interface),
+            "module" => Some(Self::Module),
+            "file" => Some(Self::File),
+            "variable" => Some(Self::Variable),
+            "constant" => Some(Self::Constant),
+            "type" => Some(Self::Type),
+            "macro" => Some(Self::Macro),
+            "namespace" => Some(Self::Namespace),
+            "package" => Some(Self::Package),
+            _ => None,
+        }
+    }
 }
 
 /// A node in the code graph
@@ -298,6 +319,22 @@ impl EdgeKind {
             Self::Tests => "tests",
             Self::Documents => "documents",
             Self::Configures => "configures",
+        }
+    }
+
+    pub fn from_name(name: &str) -> Option<Self> {
+        match name.to_lowercase().as_str() {
+            "calls" => Some(Self::Calls),
+            "imports" => Some(Self::Imports),
+            "inherits" => Some(Self::Inherits),
+            "implements" => Some(Self::Implements),
+            "contains" => Some(Self::Contains),
+            "references" => Some(Self::References),
+            "depends_on" => Some(Self::DependsOn),
+            "tests" => Some(Self::Tests),
+            "documents" => Some(Self::Documents),
+            "configures" => Some(Self::Configures),
+            _ => None,
         }
     }
 }

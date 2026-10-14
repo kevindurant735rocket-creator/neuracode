@@ -1,5 +1,3 @@
-version: '3.8'
-
 services:
   neuracode:
     build: .
@@ -10,9 +8,10 @@ services:
     environment:
       - RUST_LOG=info
       - NEURACODE_CACHE_SIZE=512
-    command: ["serve", "--port", "8000"]
-    ports:
-      - "8000:8000"
+    # MCP uses stdio transport; `serve` execs the neuracode-mcp binary.
+    command: ["serve"]
+    stdin_open: true
+    tty: true
     restart: unless-stopped
 
   neuracode-web:
@@ -21,9 +20,11 @@ services:
       dockerfile: Dockerfile
     container_name: neuracode-web
     ports:
-      - "3000:3000"
+      - "3000:80"
     environment:
-      - REACT_APP_API_URL=http://localhost:8000
+      # Vite reads VITE_* vars (REACT_APP_* is CRA-only and ignored).
+      # NOTE: the web UI is a static preview in v0.1.x — not yet wired to an HTTP API.
+      - VITE_API_URL=http://localhost:8000
     depends_on:
       - neuracode
     restart: unless-stopped

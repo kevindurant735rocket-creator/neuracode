@@ -4,8 +4,13 @@ use anyhow::Result;
 use colored::Colorize;
 use neuracode_core::{NeuraCode, NeuraCodeConfig};
 
-pub async fn execute(path1: String, path2: String, format: String) -> Result<()> {
-    let config = NeuraCodeConfig::default();
+pub async fn execute(
+    config_path: Option<String>,
+    path1: String,
+    path2: String,
+    format: String,
+) -> Result<()> {
+    let config = NeuraCodeConfig::load_or_default(config_path);
     let neuracode = NeuraCode::new(config).await?;
 
     println!("{}", "Codebase Comparison".bold().underline());
